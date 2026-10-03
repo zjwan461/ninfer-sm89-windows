@@ -15,6 +15,15 @@
       }
     },
     {
+      "name": "release-4080s",
+      "displayName": "Release product binaries for RTX 4080 SUPER (80 SMs)",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build-4080s",
+      "cacheVariables": {
+        "NINFER_TARGET_SM_COUNT": "80"
+      }
+    },
+    {
       "name": "dev",
       "displayName": "Release products, tests and benchmarks",
       "inherits": "release",
@@ -26,6 +35,7 @@
   ],
   "buildPresets": [
     { "name": "release", "configurePreset": "release" },
+    { "name": "release-4080s", "configurePreset": "release-4080s" },
     { "name": "dev", "configurePreset": "dev" }
   ],
   "testPresets": [

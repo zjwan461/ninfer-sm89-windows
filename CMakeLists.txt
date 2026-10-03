@@ -12,7 +12,7 @@ if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "89")
     "'${CMAKE_CUDA_ARCHITECTURES}'")
 endif()
 
-project(ninfer LANGUAGES C CXX CUDA)
+project(ninfer-sm89-windows LANGUAGES C CXX CUDA)
 
 # --- Global settings ---------------------------------------------------------
 option(NINFER_BUILD_APPS "Build the NInfer CLI, server and perplexity evaluator" ON)
@@ -51,6 +51,22 @@ if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.8)
     "NInfer requires CUDA 12.8 or newer; found CUDA compiler "
     "${CMAKE_CUDA_COMPILER_VERSION}")
 endif()
+
+# The attention wave geometry (ops/softmax_attention/dense/causal_cache) is a compile-time
+# constant -- __device__ launch policies cannot query the device -- so the build has to be told
+# how many SMs the target card has. This is not an architecture switch (the architecture stays
+# sm_89); it selects the SM count of one sm_89 card. The default 128 matches the RTX 4090 the
+# project is tuned on; an RTX 4080 SUPER (80 SMs) build passes 80. The valid domain is even and
+# >= 66 (see causal_cache/geometry.cuh).
+set(NINFER_TARGET_SM_COUNT 128 CACHE STRING
+  "SM count of the target sm_89 card for attention wave geometry (128 = RTX 4090, 80 = RTX 4080 SUPER)")
+math(EXPR NINFER_TARGET_SM_PARITY "${NINFER_TARGET_SM_COUNT} % 2")
+if(NINFER_TARGET_SM_COUNT LESS 66 OR NOT NINFER_TARGET_SM_PARITY EQUAL 0)
+  message(FATAL_ERROR
+    "NINFER_TARGET_SM_COUNT must be an even integer >= 66; got "
+    "'${NINFER_TARGET_SM_COUNT}'")
+endif()
+add_compile_definitions(NINFER_TARGET_SM_COUNT=${NINFER_TARGET_SM_COUNT})
 
 # Tests also exercise product input, logging and protocol adapters.
 set(NINFER_BUILD_PRODUCT_SUPPORT OFF)

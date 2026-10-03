@@ -1,4 +1,4 @@
-# NInfer-4090 — Native Windows (MSVC) Port
+# NInfer-sm89 — Native Windows (MSVC) Port
 
 This branch makes [NInfer-4090](https://github.com/sergiuszm/ninfer-4090) build and
 run on **native Windows** with MSVC + CUDA, without WSL or Docker. The upstream fork
@@ -110,9 +110,18 @@ Requirements: RTX 4090 (sm_89), CUDA 12.8+ (13.4 validated), Visual Studio Build
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_TOOLCHAIN_FILE=<path>/vcpkg/scripts/buildsystems/vcpkg.cmake ^
   -DVCPKG_TARGET_TRIPLET=x64-windows ^
-  -DCMAKE_CUDA_ARCHITECTURES=89
+  -DCMAKE_CUDA_ARCHITECTURES=89 ^
+  -DNINFER_TARGET_SM_COUNT=128
 cmake --build build -j
 ```
+
+`NINFER_TARGET_SM_COUNT` (default 128) sets the SM count the attention wave geometry
+(`src/ops/softmax_attention/dense/causal_cache/`) is compiled for. Leave it at 128 for the RTX
+4090 this project is tuned on; pass `80` for an RTX 4080 SUPER. It is not an architecture switch
+— the build stays `sm_89` — and either value is safe on either card: a mismatch only costs wave
+utilisation, never correctness. The value must be even and >= 66 (both head geometries derive
+their split cap from it). The `CMakePresets.json` `release-4080s` preset selects 80 and builds
+into `build-4080s`.
 
 Products: `build/apps/ninfer.exe`, `build/apps/ninfer-serve.exe`,
 `build/apps/ninfer-perplexity.exe`. At runtime, put the vcpkg `bin` and CUDA `bin` on PATH.

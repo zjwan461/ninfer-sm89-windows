@@ -1,15 +1,15 @@
 # NInfer documentation
 
 Start with the [project README](../README.md) to download the prebuilt Windows binaries or build
-NInfer, download a model, and run the CLI or HTTP server. This fork targets one NVIDIA GeForce
-RTX 4090 (`sm_89`) on native Windows.
+NInfer, download a model, and run the CLI or HTTP server. This fork targets one NVIDIA `sm_89`
+card (RTX 4090 or RTX 4080 SUPER) on native Windows.
 
 ## User guides
 
 | Document | Purpose |
 |---|---|
 | [Native Windows port](../WINDOWS_PORT.md) | Windows build details, Qwen3.8 measurements and experiments on the RTX 4090 |
-| [Prebuilt releases](https://github.com/JGamboa/ninfer-4090-windows/releases) | Windows x64 binaries with DLLs, launchers and licenses |
+| [Prebuilt releases](https://github.com/zjwan461/ninfer-sm89-windows/releases) | Windows x64 binaries with DLLs, launchers and licenses |
 | [CLI](cli.md) | text, chat-history, image/video input, output streams, sampling, MTP, and common runtime options |
 | [HTTP serving](serving.md) | OpenAI Responses/Chat Completions, Anthropic Messages, state, streaming, token counting, authentication, and tool calls |
 | [Comparison with llama.cpp](llamacpp-comparison.md) | same-machine prefill comparison on the RTX 4090 (2026-09-26) and the earlier Linux comparison |

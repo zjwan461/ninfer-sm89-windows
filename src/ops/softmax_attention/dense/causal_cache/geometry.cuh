@@ -28,6 +28,15 @@ struct CausalAttentionGeometry : AttentionHeadMapping<QHeadsValue, KVHeadsValue>
     static_assert(SmallTMaximumSplits * kCausalSmallTMaxKeysPerSplit >= kCausalSmallTMaxKeys);
 };
 
+// The two asserts inside CausalAttentionGeometry constrain kTargetSmCount indirectly. Make the
+// valid domain explicit so a misconfigured NINFER_TARGET_SM_COUNT fails here with a clear
+// message instead of deep inside a template instantiation: even (D256H16Kv2 needs
+// SmallTWaveSplits = kTargetSmCount to be divisible by its split scale of 2) and >= 66 (both
+// geometries need SmallTMaximumSplits >= 66 to stage kCausalSmallTMaxKeys = 262144 keys).
+static_assert(kTargetSmCount % 2 == 0 && kTargetSmCount >= 66,
+              "kTargetSmCount must be even and >= 66 so both head geometries can stage "
+              "kCausalSmallTMaxKeys keys");
+
 // Rounds a split count past one wave up to whole waves, then applies the cap.
 template <typename Geometry>
 __host__ __device__ constexpr int causal_small_t_wave_splits(int splits) {

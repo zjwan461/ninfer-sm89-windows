@@ -1,6 +1,12 @@
-# NInfer-4090 for Windows
+# NInfer-sm89 for Windows
 
-A C++20/CUDA inference engine specialized for **one NVIDIA GeForce RTX 4090** (`sm_89`), built
+> Personal fork of [JGamboa/ninfer-4090-windows](https://github.com/JGamboa/ninfer-4090-windows),
+> maintained at [zjwan461/ninfer-sm89-windows](https://github.com/zjwan461/ninfer-sm89-windows).
+> The change relative to upstream: the target SM count is a build option, so one `sm_89` source
+> builds for the RTX 4090 (128 SMs) or the RTX 4080 SUPER (80 SMs).
+
+A C++20/CUDA inference engine specialized for **one NVIDIA `sm_89` card** -- RTX 4090 (128 SMs) or
+RTX 4080 SUPER (80 SMs), selected at build time with `NINFER_TARGET_SM_COUNT` -- built
 and run natively on **Windows 11** (MSVC + CUDA; no WSL, no Docker). It serves two 27B models of
 the same architecture through a CLI and an OpenAI- and Anthropic-compatible HTTP server:
 
@@ -45,7 +51,7 @@ otherwise; the conditions are next to each table. Both models run the full 262K-
 
 | | |
 |---|---|
-| GPU | NVIDIA GeForce RTX 4090, 24 GB (`sm_89`). The build targets this card only. |
+| GPU | NVIDIA GeForce RTX 4090 (128 SMs, 24 GB) or RTX 4080 SUPER (80 SMs, 32 GB), `sm_89`. The build targets one `sm_89` card; set `NINFER_TARGET_SM_COUNT` to its SM count. |
 | OS | Windows 11 x64 |
 | Toolchain | Visual Studio Build Tools with MSVC (2026 validated), CUDA 12.8 or newer (13.4 validated), CMake 3.28+, Ninja |
 | Libraries | [vcpkg](https://github.com/microsoft/vcpkg) (`curl`, `ffmpeg`, `pkgconf`, installed from the manifest) |
@@ -53,8 +59,8 @@ otherwise; the conditions are next to each table. Both models run the full 262K-
 
 ### 1. Get the binaries
 
-**Prebuilt (easiest):** download `ninfer-4090-windows-x64-<date>.zip` from the
-[latest release](https://github.com/JGamboa/ninfer-4090-windows/releases/latest) and unzip it.
+**Prebuilt (easiest):** download `ninfer-sm89-windows-x64-<date>.zip` from the
+[latest release](https://github.com/zjwan461/ninfer-sm89-windows/releases/latest) and unzip it.
 It needs only an NVIDIA driver 595 or newer and the
 [VC++ 2015-2022 x64 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe): the CUDA
 runtime is built into the executables, and the zip includes the DLLs, two server launchers and
@@ -64,8 +70,8 @@ the licenses. Skip to step 2.
 CUDA on `PATH`:
 
 ```bat
-git clone https://github.com/JGamboa/ninfer-4090-windows
-cd ninfer-4090-windows
+git clone https://github.com/zjwan461/ninfer-sm89-windows
+cd ninfer-sm89-windows
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
   -DVCPKG_TARGET_TRIPLET=x64-windows -DCMAKE_CUDA_ARCHITECTURES=89
@@ -505,7 +511,7 @@ The full protocol reference, including every field and error code, is in
 
 ## Lineage and credits
 
-This repository descends from a chain of ports; each added what the next one builds on:
+This fork descends from a chain of ports; each added what the next one builds on:
 
 - [Neroued/ninfer](https://github.com/Neroued/ninfer) — the engine, developed for the RTX 5090
   (`sm_120a`).
@@ -521,9 +527,13 @@ This repository descends from a chain of ports; each added what the next one bui
   ([comparison](docs/udp-fork-comparison.md)).
 - [shantanusingh16/ninfer-4090](https://github.com/shantanusingh16/ninfer-4090) — llama.cpp-style
   `timings` on chat completions.
-- This repository — the native Windows build, Ternary Bonsai 2 27B (converter, ternary format and
-  kernels, vision), n-gram speculation, the concurrent-lane and prefill work, and the Qwen3.8
-  DFlash2 verification routes.
+- [JGamboa/ninfer-4090-windows](https://github.com/JGamboa/ninfer-4090-windows) — the native
+  Windows build, Ternary Bonsai 2 27B (converter, ternary format and kernels, vision), n-gram
+  speculation, the concurrent-lane and prefill work, and the Qwen3.8 DFlash2 verification routes.
+- This repository ([zjwan461/ninfer-sm89-windows](https://github.com/zjwan461/ninfer-sm89-windows))
+  — a fork of `JGamboa/ninfer-4090-windows` that turns the compile-time target SM count into the
+  `NINFER_TARGET_SM_COUNT` build option, so the same `sm_89` source builds for the RTX 4090
+  (128 SMs) or the RTX 4080 SUPER (80 SMs).
 
 Ternary Bonsai 2 27B, its packings and Hadamard rotation are by [Prism ML](https://huggingface.co/prism-ml);
 their [llama.cpp fork](https://github.com/PrismML-Eng/llama.cpp) defined the formats this branch

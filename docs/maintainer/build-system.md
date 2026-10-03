@@ -18,6 +18,7 @@ The default configuration is Release. Ninja links and archives share the single-
 | `NINFER_BUILD_APPS` | ON | CLI, HTTP server and perplexity evaluator |
 | `BUILD_TESTING` | OFF | C++ tests and registered Python interoperability tests |
 | `NINFER_BUILD_BENCHMARKS` | OFF | Op, model, Engine and context-cost benchmarks |
+| `NINFER_TARGET_SM_COUNT` | 128 | Compile-time SM count for the attention wave geometry (even, >= 66; 128 = RTX 4090, 80 = RTX 4080 SUPER) |
 
 Apps or tests enable the internal product support components: media acquisition, prompt input,
 logging and serving. This is one derived condition, not a separate user option. FFmpeg belongs
