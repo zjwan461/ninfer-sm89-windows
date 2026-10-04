@@ -199,11 +199,12 @@ text-only `audio` configuration, and `prediction` are accepted without changing 
 Metadata, user/safety identifiers, service-tier and prompt-cache hints are likewise advisory.
 Unknown top-level fields are ignored.
 
-A string `name` on a `tool` message is accepted as an ignored, output-neutral compatibility
-extension for clients that mirror the function name onto tool results. It does not participate in
-tool identity, prompt rendering, or output. Non-string values are malformed; non-empty names on
-other message roles remain unsupported because they carry participant identity that the loaded chat
-template cannot represent.
+A string `name` on any message is accepted as an ignored, output-neutral compatibility extension.
+Clients set it in ways the loaded chat template has no slot for: some mirror the function name onto
+`tool` results, and agent frameworks such as LangChain set the agent name on assistant turns
+(`{"role":"assistant","name":"SassyCat"}`). The field never participates in participant identity,
+tool identity, prompt rendering, or output; only its JSON type is validated. Non-string values are
+malformed.
 
 For commonly generated OpenAI-compatible payloads, `repetition_penalty` is accepted only at its
 neutral value `1`, and `mm_processor_kwargs` when empty or containing only null values. String-form

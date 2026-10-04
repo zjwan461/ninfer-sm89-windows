@@ -31,9 +31,6 @@ case "$product_root" in
   "$dist_root/$product_name") ;;
   *) printf 'Refusing to package outside dist: %s\n' "$product_root" >&2; exit 1 ;;
 esac
-rm -rf -- "$product_root"
-rm -f -- "$archive_path"
-mkdir -- "$product_root"
 
 resolve_build_root() {
   local card="$1" sm="$2" candidates="$3" candidate path
@@ -64,10 +61,31 @@ assert_sm_profile() {
   fi
 }
 
+# Pre-flight: resolve and validate every profile before touching dist/, so a missing build or a
+# wrong SM profile leaves dist/ untouched instead of a half-written bundle directory.
+resolved_subdirs=()
+resolved_roots=()
 for entry in "${variants[@]}"; do
   IFS='|' read -r subdir sm candidates <<< "$entry"
   build_root="$(resolve_build_root "$subdir" "$sm" "$candidates")"
   assert_sm_profile "$build_root" "$sm" "$subdir"
+  for product in "${products[@]}"; do
+    if [[ ! -f "$build_root/apps/$product" ]]; then
+      printf 'Missing release product: %s\n' "$build_root/apps/$product" >&2
+      exit 1
+    fi
+  done
+  resolved_subdirs+=("$subdir")
+  resolved_roots+=("$build_root")
+done
+
+rm -rf -- "$product_root"
+rm -f -- "$archive_path"
+mkdir -- "$product_root"
+
+for index in "${!resolved_subdirs[@]}"; do
+  subdir="${resolved_subdirs[$index]}"
+  build_root="${resolved_roots[$index]}"
 
   variant_root="$product_root/$subdir"
   mkdir -- "$variant_root"
@@ -93,8 +111,8 @@ done
 printf '%s\n' "$release_tag-sm89" > "$product_root/VERSION"
 cp -- "$repo_root/LICENSE" "$product_root/"
 cp -- "$repo_root/WINDOWS_PORT.md" "$product_root/"
-if [[ -f "$repo_root/ninfer-4080s-build-manual.md" ]]; then
-  cp -- "$repo_root/ninfer-4080s-build-manual.md" "$product_root/"
+if [[ -f "$repo_root/ninfer-windows-build-manual.md" ]]; then
+  cp -- "$repo_root/ninfer-windows-build-manual.md" "$product_root/"
 fi
 
 cat > "$product_root/README.md" <<EOF

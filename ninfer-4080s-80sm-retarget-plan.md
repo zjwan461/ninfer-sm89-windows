@@ -16,7 +16,7 @@
 
 - 本 fork 仅编译 `sm_89`（`CMakeLists.txt:6-13` 强制），4080 SUPER 与 4090 同架构，二进制可直接运行。
 - 但 attention 的小 T（causal_cache）wave 几何是**编译期常量** `kTargetSmCount = 128`（`device.h:28`），在 80 SM 上会跑成 ~1.6 个 wave，尾波不满 → prefill/decode 达不到 4090 的"整波填满"数字。
-- 这正是"自编译的真正价值"里价值最高的一条（见 `ninfer-4080s-two-routes.md` §6）。本次把它落成**可维护、可 A/B、零 4090 回归**的工程改动。
+- 这正是"自编译的真正价值"里价值最高的一条。本次把它落成**可维护、可 A/B、零 4090 回归**的工程改动。
 
 ---
 
@@ -228,14 +228,14 @@ vcpkg 首编 1-2 h + 原生编译 20-40 min + 80 档编译 20-40 min + 正确性
 
 ---
 
-## 10. 顺带更正（对既有两份调研文档）
+## 10. 复核中的更正（不影响本计划）
 
-复核发现（不影响本计划，建议一并修订）：
+复核源码时发现以下与早期判断不符之处，记录在此以免再次踩坑：
 
-1. `ninfer-4080s-two-routes.md` "全仓搜 `GeForce` 只有两处" **不成立**（实际 29 处）；且仓库**确有**依赖设备名的映射函数 `context_cost_hardware_class()`（`context_cost.cpp:522`，由 `model_instance.cpp:175-176` 运行时调用）。但其结论（4080S 不被拒绝）成立：该函数对任意设备名都产出 slug，仅影响成本档位，回落 `generic_context_prefill_cost()`。
-2. "§1.4 那三处 `kTargetSmCount`" **实为四处**（漏掉设备镜像 `small_t.cuh:114`）。
-3. 行号小错：CUDA ≥ 12.8 在 `CMakeLists.txt:49-53`（文档写 `:56`）；`sm_89` 校验在 6-13 行（文档写 3-14）。
-4. `winport_configure.bat` 的 `-DCMAKE_TOOLCHAIN_FILE=E:/LLM/vcpkg/...` 与其他文档的 `C:/vcpkg` 冲突；`route-b` 文档自身"装到 E 盘 / 配 C 盘"矛盾。
+1. "全仓搜 `GeForce` 只有两处" **不成立**（实际 29 处）；且仓库**确有**依赖设备名的映射函数 `context_cost_hardware_class()`（`context_cost.cpp:522`，由 `model_instance.cpp:175-176` 运行时调用）。但这不影响结论：该函数对任意设备名都产出 slug，仅影响成本档位，回落 `generic_context_prefill_cost()`，**4080 SUPER 不会被拒绝**。
+2. `kTargetSmCount` 的消费点 **实为四处**，容易漏掉设备镜像 `small_t.cuh:114`。
+3. 行号易错：CUDA ≥ 12.8 的校验在 `CMakeLists.txt:49-53`；`sm_89` 校验在 `CMakeLists.txt:6-13`。
+4. `winport_configure.bat` 里 `-DCMAKE_TOOLCHAIN_FILE=E:/LLM/vcpkg/...` 是移植作者机器上的硬编码路径，且该脚本的「vcpkg 装到 E 盘 / 配到 C 盘」说法自相矛盾。**不要用它**；本 fork 的构建步骤以 `ninfer-windows-build-manual.md` 为准（统一用 `%VCPKG_ROOT%` 占位，不写死盘符）。
 
 ---
 

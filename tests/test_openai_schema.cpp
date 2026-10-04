@@ -430,8 +430,25 @@ int test_messages_and_media() {
 
     body                        = base_request();
     body["messages"][0]["name"] = "speaker";
-    failures += check(api_error([&] { (void)parse(body); }).code == "message_name_not_supported",
-                      "message name rejected");
+    const GenerationRequest named_user = parse(body).generation;
+    failures += check(named_user.messages[0].role == ninfer::ChatRole::User &&
+                          named_user.messages[0].content.size() == 1 &&
+                          named_user.messages[0].content[0].text == "hello",
+                      "user message name is an ignored compatibility extension");
+
+    body = base_request();
+    body["messages"].push_back(Json{{"role", "assistant"}, {"content", "hi"}, {"name", "SassyCat"}});
+    const GenerationRequest named_assistant = parse(body).generation;
+    failures += check(named_assistant.messages.back().role == ninfer::ChatRole::Assistant &&
+                          named_assistant.messages.back().content.size() == 1 &&
+                          named_assistant.messages.back().content[0].text == "hi",
+                      "assistant agent name is an ignored compatibility extension");
+
+    body                           = base_request();
+    body["messages"][0]["name"]    = Json::array();
+    failures +=
+        check(api_error([&] { (void)parse(body); }).message == "message name must be a string",
+              "non-tool message name remains type checked");
 
     body = base_request();
     body["messages"].push_back(Json{
