@@ -16,7 +16,7 @@ E:\workspaces\c\vcpkg\bootstrap-vcpkg.bat
 setx VCPKG_ROOT E:\workspaces\c\vcpkg      :: 装完新开终端
 
 :: 1) 用「x64 Native Tools Command Prompt for VS 2022」打开 cmd，然后：
-cd /d E:\workspaces\ai\ninfer-4090-windows
+cd /d E:\workspaces\ai\ninfer-sm89-windows
 set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.4"
 set "PATH=%CUDA_PATH%\bin;%PATH%"
 
