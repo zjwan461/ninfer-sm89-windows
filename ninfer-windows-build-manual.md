@@ -226,10 +226,10 @@ set "PATH=<repo>\build-4080s\vcpkg_installed\x64-windows\bin;%CUDA_PATH%\bin;%PA
 build-4080s\apps\ninfer.exe                       CLI
 build-4080s\apps\ninfer-serve.exe                 HTTP 服务（OpenAI + Anthropic 双协议）
 build-4080s\apps\ninfer-perplexity.exe            困惑度评测
-build-4080s\apps\start-bonsai-server.bat          启动脚本（构建后自动随 exe 落位）
-build-4080s\apps\start-qwen38-server.bat          启动脚本（构建后自动随 exe 落位）
+build-4080s\apps\start-bonsai-rtx4080s.bat       启动脚本（80 SM 档；构建后自动随 exe 落位）
+build-4080s\apps\start-qwen38-rtx4080s.bat       启动脚本（80 SM 档；构建后自动随 exe 落位）
 ```
-> 两个 `start-*-server.bat` 由 `apps/CMakeLists.txt` 的 `ninfer-serve` **POST_BUILD** 步骤自动从仓库根拷到 exe 同目录（脚本内 `%~dp0ninfer-serve.exe` 由此解析）。它们属于本 fork 的本地文件，缺失时不报错；本 fork 的打包脚本 `scripts/package-release-v061-sm89.ps1` 也会带上它们（上游的 v040/v050/v060 脚本保持原样，不涉及这两个 bat）。
+> 启动脚本**按编译期档位各一份**（`start-bonsai-rtx4090.bat` / `start-qwen38-rtx4090.bat` 对应 128 SM，`-rtx4080s` 对应 80 SM），由 `apps/CMakeLists.txt` 的 `ninfer-serve` **POST_BUILD** 步骤按 `NINFER_TARGET_SM_COUNT` 自动把**匹配那一对**拷到 exe 同目录（脚本内 `%~dp0ninfer-serve.exe` 由此解析）。两档脚本只差 `--prefill-chunk`（1408 / 1024）。它们属于本 fork 的本地文件，缺失时不报错；本 fork 的打包脚本 `scripts/package-release-v061-sm89.ps1` 也会按档带上对应两份（上游的 v040/v050/v060 脚本保持原样，不涉及这些 bat）。
 
 先看帮助与设备识别：
 ```bat
@@ -274,9 +274,9 @@ build-4080s\apps\ninfer-serve.exe <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer ^
 ```
 - 实时看板：浏览器打开 `http://127.0.0.1:8080/monitor`；指标 `/metrics`、槽位 `/slots`。
 - 若遇到「CUDA Graph × batch≥2 投机解码」长时间运行崩溃，加 `--no-cuda-graph`（代价约 2.6% 吞吐）。
-- 也可以用两个启动脚本（`build-4080s\apps\` 里在编译后也会有），模型路径作为**参数**：
-  `start-bonsai-server.bat <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer`（目录也行；省略参数则依次取 `NINFER_MODEL`、`NINFER_MODEL_DIR`、`models\` 下的默认名）；模型之后的参数原样透传给 `ninfer-serve`。
-- 以上是 80 SM 档（RTX 4080 SUPER）的保守参数；128 SM 档（RTX 4090）用同一组参数即可运行，可按显存余量自行调高 `--max-concurrency` 等上限（`build-4090\apps\` 下的二进制同理，启动脚本也在那里）。
+- 也可以直接用启动脚本（`build-4080s\apps\` 里在编译后也会有，按档自动落位对应那一对），模型路径作为**参数**：
+  `start-bonsai-rtx4080s.bat <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer`（目录也行；省略参数则依次取 `NINFER_MODEL`、`NINFER_MODEL_DIR`、`models\` 下的默认名）；模型之后的参数原样透传给 `ninfer-serve`。
+- 以上是 80 SM 档（RTX 4080 SUPER）的保守参数；128 SM 档（RTX 4090）用 `build-4090\apps\` 下的二进制与 `start-*-rtx4090.bat`，参数可同样按显存余量自行调高 `--max-concurrency` 等上限。两档脚本的具体差异写在各自文件头注释里（`--prefill-chunk` 随 SM 档；4080S 的 Qwen3.8 档还把 `--max-context` 提到了 131072）。
 
 ---
 
@@ -327,6 +327,8 @@ findstr /C:"NINFER_TARGET_SM_COUNT=80" build-4080s\compile_commands.json
 | 首次 configure 卡很久 | vcpkg 在编 FFmpeg | 正常，**1~2 小时**；别中断 |
 | 找不到 Windows SDK | 未进入 VS 编译环境 | 用「x64 Native Tools」提示符（会正确设置 `WindowsSdkDir`） |
 | 改过 CUDA 编译器后报错 | 旧 build 目录绑定了旧编译器 | 删掉 build 目录重新 configure |
+| `max_context exceeds the configured position capacity` | `--max-context` 超过了 artifact 声明的位置容量（Qwen3.8 / Bonsai 都是 **262144**，因果 attention 的分块几何也以 262144 keys 为上限） | 把 `--max-context` 设在 262144 以内；要冲顶就把 `--max-concurrency` 降到 1 并去掉 host spill 档 |
+| 请求期报 `context_length_exceeded`（而启动正常） | `--kv-capacity auto` 按实测显存解出的 KV 容量小于 `--max-context` | 看启动日志 `KV <tokens>, ..., auto \| pages a/b`；调低 `--max-context` / 并发，或减小 `--host-kv-mib` 对显存的占用 |
 | 运行时报缺 DLL | vcpkg bin 不在 PATH | 见 §3 第 5 步设置运行时 PATH |
 | 链接报 LIBCMT 冲突 | 手动改了链接选项 | 恢复仓库默认（`/NODEFAULTLIB:LIBCMT` 已在 CMakeLists 中） |
 
@@ -411,7 +413,7 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
 
     dist\ninfer-sm89-windows-x64-0.6.1\
       sm128-rtx4090\      exe + vcpkg DLL + VERSION + start-*.bat   （RTX 4090）
-      sm80-rtx4080s\      exe + vcpkg DLL + VERSION + start-*.bat   （RTX 4080 SUPER）
+      sm80-rtx4080s\      exe + vcpkg DLL + VERSION + start-*-rtx4080s.bat  （RTX 4080 SUPER）
       README.md           哪张卡用哪个子目录
       WINDOWS_PORT.md     本 fork 的移植说明
       ninfer-windows-build-manual.md
@@ -424,8 +426,8 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
 
 - **只打包，不编译**：缺构建目录或 exe 会直接报错，与上游 `scripts/package-release-v0x0.*` 定位一致。
 - **档位自检**：打包前用 `compile_commands.json` 断言该目录确实是 `NINFER_TARGET_SM_COUNT=128/80`，防止把 80 档标成 4090。
-- 启动脚本放进**各子目录**（不是根目录），因为脚本靠 `%~dp0ninfer-serve.exe` 找同目录的 exe。
-- 启动脚本的模型路径是**参数**而非硬编码：`start-bonsai-server.bat <model.ninfer>`；不给参数时依次取 `NINFER_MODEL` → `NINFER_MODEL_DIR\<默认文件名>` → `models\<默认文件名>`，模型之后的参数原样透传（另可用 `NINFER_SERVE_ARGS`、`NINFER_SERVER`）。
+- 启动脚本**按档分两份**并放进**各自的子目录**（不是根目录）：`sm128-rtx4090\` 放 `start-*-rtx4090.bat`，`sm80-rtx4080s\` 放 `start-*-rtx4080s.bat`（脚本靠 `%~dp0ninfer-serve.exe` 找同目录的 exe，所以不能只放根目录一份）。
+- 启动脚本的模型路径是**参数**而非硬编码：`start-bonsai-rtx4080s.bat <model.ninfer>`；不给参数时依次取 `NINFER_MODEL` → `NINFER_MODEL_DIR\<默认文件名>` → `models\<默认文件名>`，模型之后的参数原样透传（另可用 `NINFER_SERVE_ARGS`、`NINFER_SERVER`）。
 - `VERSION` 由脚本写入：仓库根的 `VERSION` 是上游 3090 的标签，不适用于本包。
 - 孪生的 Bash 脚本 `scripts/package-release-v061-sm89.sh` 打 Linux 版（仓库要求每个 `.ps1` 都有 `.sh` 配对）。
 

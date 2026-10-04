@@ -26,11 +26,15 @@ $ProductRoot = Join-Path $DistRoot $ProductName
 $ArchivePath = Join-Path $DistRoot "$ProductName.zip"
 $ChecksumPath = Join-Path $DistRoot "SHA256SUMS-v$ReleaseTag-sm89.txt"
 
-# Per card: the subdirectory it occupies, the SM profile to verify, and the build directories to
-# look for (newest name first).
+# Per card: the subdirectory it occupies, the SM profile to verify, the build directories to look
+# for (newest name first), and the launcher pair that profile ships. The launchers resolve
+# `%~dp0ninfer-serve.exe`, so each profile carries its own pair inside its subdirectory; they
+# differ only in the prefill chunk the matching wave geometry wants.
 $Variants = @(
-    @{ Card = 'rtx4090'; Subdir = 'sm128-rtx4090'; SmCount = 128; BuildDirs = @('build-4090', 'build') },
-    @{ Card = 'rtx4080s'; Subdir = 'sm80-rtx4080s'; SmCount = 80; BuildDirs = @('build-4080s') }
+    @{ Card = 'rtx4090'; Subdir = 'sm128-rtx4090'; SmCount = 128; BuildDirs = @('build-4090', 'build');
+       Launchers = @('start-bonsai-rtx4090.bat', 'start-qwen38-rtx4090.bat') },
+    @{ Card = 'rtx4080s'; Subdir = 'sm80-rtx4080s'; SmCount = 80; BuildDirs = @('build-4080s');
+       Launchers = @('start-bonsai-rtx4080s.bat', 'start-qwen38-rtx4080s.bat') }
 )
 
 # Ninja (single config) puts the products directly in apps\; the apps\Release\ candidates keep the
@@ -42,9 +46,6 @@ $Products = @(
     @{ Name = 'ninfer-perplexity.exe'; Candidates = @('apps\ninfer-perplexity.exe', 'apps\Release\ninfer-perplexity.exe') }
 )
 
-# The server launchers resolve `%~dp0ninfer-serve.exe`, so each SM profile needs its own copy
-# inside its subdirectory; the shared docs sit at the archive root.
-$Launchers = @('start-bonsai-server.bat', 'start-qwen38-server.bat')
 
 function Resolve-BuildRoot {
     param([System.Collections.IDictionary]$Variant)
@@ -131,7 +132,7 @@ foreach ($variant in $Variants) {
     }
 
     # Repositories without the fork launchers still package cleanly.
-    foreach ($launcher in $Launchers) {
+    foreach ($launcher in $variant.Launchers) {
         $source = Join-Path $RepoRoot $launcher
         if (Test-Path -LiteralPath $source) {
             Copy-Item -LiteralPath $source -Destination $variantRoot
@@ -158,10 +159,14 @@ $readme = @'
 # NInfer sm_89 - native Windows bundle (__TAG__)
 
 This archive carries both compile-time SM profiles of the sm_89 port. Pick the folder that matches
-your card, then run its `start-bonsai-server.bat` or `start-qwen38-server.bat` from inside that
-folder (they resolve `%~dp0ninfer-serve.exe`), passing the model path as the first argument:
+your card, then run the launcher for your model from inside that folder (they resolve
+`%~dp0ninfer-serve.exe`), passing the model path as the first argument:
 
-    start-bonsai-server.bat D:\models\bonsai2_27b_vl_mtp_q4q5.ninfer
+    sm128-rtx4090\start-bonsai-rtx4090.bat D:\models\bonsai2_27b_vl_mtp_q4q5.ninfer
+    sm80-rtx4080s\start-qwen38-rtx4080s.bat D:\models\qwen3_8_27b_a8.ninfer
+
+Each profile folder ships its own `start-bonsai-rtx<card>.bat` and `start-qwen38-rtx<card>.bat`; the
+4090 and 4080 SUPER pairs differ only in `--prefill-chunk`.
 
 A directory containing a single `.ninfer` file works too. Without an argument the launcher falls
 back to `NINFER_MODEL`, then `NINFER_MODEL_DIR`, then a default file name under `models\`.

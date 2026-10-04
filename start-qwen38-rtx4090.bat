@@ -1,27 +1,31 @@
 @echo off
 setlocal
-rem NInfer: OpenAI + Anthropic compatible server for Ternary Bonsai 2 27B (text + vision + MTP).
+rem NInfer: OpenAI + Anthropic compatible server for Qwen3.8-27B (int8-prefill artifact).
+rem Tuned for the RTX 4090 profile (NINFER_TARGET_SM_COUNT=128) -- see start-qwen38-rtx4080s.bat
+rem for the 80-SM RTX 4080 SUPER build. Only --prefill-chunk differs between the two; the KV pool
+rem follows the measured free VRAM (--kv-capacity auto), so add --vision if you want image input
+rem and --no-cuda-graph if long speculative runs ever crash.
 rem
 rem Usage:
-rem   start-bonsai-server.bat [MODEL] [extra ninfer-serve args...]
+rem   start-qwen38-rtx4090.bat [MODEL] [extra ninfer-serve args...]
 rem     MODEL  path to a .ninfer file, or to a directory containing one
 rem            (omit it to use the resolution order below)
 rem
 rem Model resolution, first hit wins:
 rem   1. the first command-line argument
 rem   2. NINFER_MODEL      full path to a .ninfer file
-rem   3. NINFER_MODEL_DIR  directory holding bonsai2_27b_vl_mtp_q4q5.ninfer
-rem   4. models\bonsai2_27b_vl_mtp_q4q5.ninfer beside this script
+rem   3. NINFER_MODEL_DIR  directory holding qwen3_8_27b_a8.ninfer
+rem   4. models\qwen3_8_27b_a8.ninfer beside this script
 rem
 rem Binary: set NINFER_SERVER to use a ninfer-serve.exe somewhere else.
 rem Extra flags can also come from NINFER_SERVE_ARGS.
 rem Download the artifact first:
-rem   hf download jgamboa/Ternary-Bonsai-2-27B-NInfer-4090 bonsai2_27b_vl_mtp_q4q5.ninfer --local-dir models
+rem   hf download jgamboa/Qwen3.8-27B-NInfer-4090 qwen3_8_27b_a8.ninfer --local-dir models
 rem API http://127.0.0.1:8080/v1   Monitor http://127.0.0.1:8080/monitor
 
 set "BIN=%~dp0"
 set "SCRIPT_NAME=%~nx0"
-set "DEFAULT_NAME=bonsai2_27b_vl_mtp_q4q5.ninfer"
+set "DEFAULT_NAME=qwen3_8_27b_a8.ninfer"
 if not defined NINFER_SERVER set "NINFER_SERVER=%BIN%ninfer-serve.exe"
 
 set "MODEL=%~1"
@@ -64,12 +68,14 @@ if not exist "%NINFER_SERVER%" (
   exit /b 1
 )
 
-echo Starting Ternary Bonsai 2 27B at http://127.0.0.1:8080/v1
+echo Starting Qwen3.8-27B at http://127.0.0.1:8080/v1
 echo Model: %MODEL%
 "%NINFER_SERVER%" "%MODEL%" ^
-  --host 127.0.0.1 --port 8080 --model-id bonsai-27b ^
-  --max-context 262144 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
-  --spec mtp --draft-tokens 2 --lm-head-draft --ngram chain --vision %EXTRA% %NINFER_SERVE_ARGS%
+  --host 127.0.0.1 --port 8080 --model-id qwen3.8-27b ^
+  --max-context 100000 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
+  --max-pending-requests 10 --pending-timeout-ms 600000 --prefill-chunk 1408 ^
+  --spec mtp --draft-tokens 3 --lm-head-draft --ngram chain --preserve-thinking ^
+  --device-state-slots 3 --host-state-slots 4 --host-kv-mib 4096 %EXTRA% %NINFER_SERVE_ARGS%
 set "SERVE_EXIT=%ERRORLEVEL%"
 pause
 exit /b %SERVE_EXIT%
@@ -80,6 +86,6 @@ echo Usage: %SCRIPT_NAME% [MODEL] [extra ninfer-serve args...]
 echo   MODEL  path to a .ninfer file, or to a directory containing one
 echo Resolution order: argument, NINFER_MODEL, NINFER_MODEL_DIR, %BIN%models\%DEFAULT_NAME%
 echo Download it with:
-echo   hf download jgamboa/Ternary-Bonsai-2-27B-NInfer-4090 %DEFAULT_NAME% --local-dir models
+echo   hf download jgamboa/Qwen3.8-27B-NInfer-4090 %DEFAULT_NAME% --local-dir models
 pause
 exit /b 1

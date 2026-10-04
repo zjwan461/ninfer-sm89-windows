@@ -1,9 +1,30 @@
 @echo off
 setlocal
 rem NInfer: OpenAI + Anthropic compatible server for Qwen3.8-27B (int8-prefill artifact).
+rem Tuned for the RTX 4080 SUPER profile (NINFER_TARGET_SM_COUNT=80, written for a 32 GB card) --
+rem see start-qwen38-rtx4090.bat for the 128-SM RTX 4090 build.
+rem
+rem Differences from the 4090 pair:
+rem   * --prefill-chunk 1024 (SM-dependent: the 80-SM wave geometry fills more easily with the
+rem     smaller chunk; the 4090 pair uses 1408),
+rem   * --max-context 131072 (VRAM-dependent: this profile targets 32 GB; the 4090 pair keeps the
+rem     artifact-validated 100000).
+rem
+rem --max-context ceiling is 262144: the artifact declares max_position_embeddings = 262144 and the
+rem causal geometry stages at most kCausalSmallTMaxKeys = 262144 keys, so a larger value is
+rem rejected at startup. Reaching 262144 requires dropping --max-concurrency to 1 and removing the
+rem host spill flags below, because KV scales linearly with max_context and concurrency 3 means up
+rem to three full-length caches on top of ~19 GiB of weights. 100000 is what the model card
+rem validated; 131072 is the conservative step taken here.
+rem
+rem The KV pool follows the measured free VRAM (--kv-capacity auto): check the startup log line
+rem "capacity | KV <tokens>, ..., auto | pages a/b" and make sure the resolved token count is >=
+rem --max-context. Add --vision for image input, and --no-cuda-graph if long speculative runs ever
+rem crash. The host spill flags below suit a 24 GB card; a card with more VRAM can drop
+rem --host-kv-mib / --host-state-slots.
 rem
 rem Usage:
-rem   start-qwen38-server.bat [MODEL] [extra ninfer-serve args...]
+rem   start-qwen38-rtx4080s.bat [MODEL] [extra ninfer-serve args...]
 rem     MODEL  path to a .ninfer file, or to a directory containing one
 rem            (omit it to use the resolution order below)
 rem
@@ -68,8 +89,8 @@ echo Starting Qwen3.8-27B at http://127.0.0.1:8080/v1
 echo Model: %MODEL%
 "%NINFER_SERVER%" "%MODEL%" ^
   --host 127.0.0.1 --port 8080 --model-id qwen3.8-27b ^
-  --max-context 100000 --kv-capacity 100000 --kv-dtype rk4v4-e8 --max-concurrency 3 ^
-  --max-pending-requests 10 --pending-timeout-ms 600000 --prefill-chunk 1408 ^
+  --max-context 131072 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
+  --max-pending-requests 10 --pending-timeout-ms 600000 --prefill-chunk 1024 ^
   --spec mtp --draft-tokens 3 --lm-head-draft --ngram chain --preserve-thinking ^
   --device-state-slots 3 --host-state-slots 4 --host-kv-mib 4096 %EXTRA% %NINFER_SERVE_ARGS%
 set "SERVE_EXIT=%ERRORLEVEL%"

@@ -37,8 +37,10 @@ powershell -ExecutionPolicy Bypass -File scripts\package-release-v061-sm89.ps1
 
 It creates `dist/ninfer-sm89-windows-x64-<version>/` containing the `sm128-rtx4090/` and
 `sm80-rtx4080s/` subdirectories (each with the executables, vcpkg DLLs, its own `VERSION`, and the
-`start-*-server.bat` launchers) plus the shared docs, archives it as
-`ninfer-sm89-windows-x64-<version>.zip`, and writes `dist/SHA256SUMS-v<version>-sm89.txt`.
+launcher pair for that profile: `start-bonsai-rtx4090.bat` + `start-qwen38-rtx4090.bat`, or the
+`-rtx4080s` pair) plus the shared docs, archives it as
+`ninfer-sm89-windows-x64-<version>.zip`, and writes `dist/SHA256SUMS-v<version>-sm89.txt`. The two
+pairs differ only in `--prefill-chunk`, which is the one knob tied to the attention wave geometry.
 
 Before packaging, each profile's `NINFER_TARGET_SM_COUNT` is asserted against its build directory's
 `compile_commands.json`, so a mislabeled dual-SM archive cannot be produced silently. The script is
