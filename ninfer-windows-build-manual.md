@@ -1,6 +1,6 @@
 # NInfer Windows 源码编译手册（`sm_89`：RTX 4090 / 4080 SUPER）
 
-> 目标：在 **Windows 11 x64 + `sm_89` 显卡**上，从源码编译 NInfer（本 fork，`sm_89` 原生 Windows 移植），并按需要选择 128 SM（RTX 4090）或 80 SM（RTX 4080 SUPER）的 attention 几何档位。
+> 目标：在 **Windows 11 x64 + `sm_89` 显卡**上，从源码编译 NInfer（本 fork，`sm_89` 原生 Windows 移植），并按需要选择 128 SM（RTX 4090）或 80 SM（RTX 4080 SUPER，本手册作者的卡为 **32 GB** 显存版）的 attention 几何档位。
 > 前置：只需要 **Visual Studio 2022 + CUDA Toolkit**；唯一的额外软件 **vcpkg** 由 §3 第 0 步安装。
 > 约定：本手册用占位符与环境变量，不与任何机器绑定——
 > `<repo>` 源码目录、`<vcpkg-root>` vcpkg 安装目录、`<cuda-path>` CUDA 安装目录、`<model-dir>` 模型目录、`<vcvars64.bat>` VS 的编译环境脚本。
@@ -44,7 +44,7 @@ cmake --build build-4080s -j
 |---|---:|---|---|
 | `release`（默认） | 128 | `build-4090`（或 `build`） | RTX 4090 基线；无测试/基准 |
 | `dev` | 128 | `build` | RTX 4090 基线 + 测试 + 基准 |
-| `release-4080s` | 80 | `build-4080s` | RTX 4080 SUPER 优化档 |
+| `release-4080s` | 80 | `build-4080s` | RTX 4080 SUPER 优化档（作者的 4080 SUPER 为 32 GB 显存版） |
 
 > `NINFER_TARGET_SM_COUNT` 是本 fork 新增的编译开关：它只决定 attention wave 几何按多少 SM 编译（**不是架构开关**，架构恒为 `sm_89`）。合法值必须是**偶数且 ≥ 66**，否则 configure 期与编译期都会报错。128 与 80 两档在任意 `sm_89` 卡上都能跑，只是档位与卡不匹配时会损失一点波次利用率，不影响正确性。
 > 编译产物**互不影响**：两档用不同输出目录，可同时保留做 A/B。
@@ -68,6 +68,7 @@ cmake --build build-4080s -j
 | GPU 架构 | `sm_89`（`CMakeLists.txt` 只接受 89） | `nvidia-smi --query-gpu=name --format=csv` |
 | 依赖 | vcpkg 提供 `curl` / `ffmpeg` / `pkgconf` | 由 manifest 自动安装 |
 | 磁盘 | 建议预留 40~60 GB | vcpkg 编 FFmpeg 时 `buildtrees/packages/downloads` 会吃 10~20 GB |
+| 显存 | 运行模型时的参考值：RTX 4090 = 24 GB；**作者的 RTX 4080 SUPER = 32 GB**（零售 AD103 卡为 16 GB） | `nvidia-smi --query-gpu=memory.total --format=csv` |
 
 CMake 与 Ninja 随 VS 2022 一起安装，但**不在默认 PATH**，只在 VS 安装目录内。用「x64 Native Tools Command Prompt for VS 2022」即可自动带上它们与 Windows SDK，无需手工配 PATH。
 
@@ -117,7 +118,7 @@ cd /d <repo>
 
 #### 用法 A：完整命令（推荐）
 
-**A-1 · 80 SM 档（RTX 4080 SUPER）：**
+**A-1 · 80 SM 档（RTX 4080 SUPER，作者的卡为 32 GB 显存版）：**
 ```bat
 cmake -S . -B build-4080s -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake ^
@@ -296,7 +297,7 @@ build-4080s\apps\ninfer-serve.exe <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer ^
 - 若遇到「CUDA Graph × batch≥2 投机解码」长时间运行崩溃，加 `--no-cuda-graph`（代价约 2.6% 吞吐）。
 - 也可以直接用启动脚本（`build-4080s\apps\` 里在编译后也会有，按档自动落位对应那一对），模型路径作为**参数**：
   `start-bonsai-rtx4080s.bat <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer`（目录也行；省略参数则依次取 `NINFER_MODEL`、`NINFER_MODEL_DIR`、`models\` 下的默认名）；模型之后的参数原样透传给 `ninfer-serve`。
-- 以上是 80 SM 档（RTX 4080 SUPER）的保守参数；128 SM 档（RTX 4090）用 `build-4090\apps\` 下的二进制与 `start-*-rtx4090.bat`，参数可同样按显存余量自行调高 `--max-concurrency` 等上限。两档脚本的具体差异写在各自文件头注释里（`--prefill-chunk` 随 SM 档；4080S 的 Qwen3.8 档还把 `--max-context` 提到了 131072）。
+- 以上是 80 SM 档（RTX 4080 SUPER）的保守参数。**这些参数是按作者的卡写的——该机为 32 GB 显存版 4080 SUPER**（零售 AD103 卡通常 16 GB）：`--max-context 131072` 与 `--max-concurrency 2` 都吃显存，**16 GB 的标准 4080 SUPER 请相应下调**（对照 `--prefill-chunk 1024` 与本段参数，先把 `--max-context` 降下来即可跑通）。128 SM 档（RTX 4090）用 `build-4090\apps\` 下的二进制与 `start-*-rtx4090.bat`，参数可同样按显存余量自行调高 `--max-concurrency` 等上限。两档脚本的具体差异写在各自文件头注释里（`--prefill-chunk` 随 SM 档；4080S 的 Qwen3.8 档还把 `--max-context` 提到了 131072，原因就是 32 GB 显存）。
 
 ---
 
@@ -455,7 +456,7 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
 
 ## 11. 示例：占位符在一台真实机器上的取值（非要求）
 
-以下是作者撰写本手册时所用机器（RTX 4080 SUPER）的真实取值与**填好值的命令**。它们**只是示例**，不构成最低要求：满足 §2 的门槛即可编译。
+以下是作者撰写本手册时所用机器（RTX 4080 SUPER，**32 GB 显存版**）的真实取值与**填好值的命令**。它们**只是示例**，不构成最低要求：满足 §2 的门槛即可编译。
 
 ### 11.1 占位符对应关系
 
@@ -472,7 +473,7 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
 
 | 项 | 值 |
 |---|---|
-| 显卡 | RTX 4080 SUPER（AD103，80 SM，`sm_89`） |
+| 显卡 | RTX 4080 SUPER（AD103，80 SM，`sm_89`，**32 GB 显存**——零售卡的标准配置为 16 GB） |
 | 系统 | Windows 11 x64 |
 | VS | Visual Studio 2022 Community（MSVC 14.44） |
 | CUDA Toolkit | 13.4（机器上另装了 12.4，构建时必须显式钉死 13.4） |

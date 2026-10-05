@@ -82,7 +82,12 @@ This produces `build\apps\ninfer.exe` (CLI), `build\apps\ninfer-serve.exe` (HTTP
 `build\apps\ninfer-perplexity.exe`. Add `-DNINFER_BUILD_BENCHMARKS=ON -DBUILD_TESTING=ON` to also
 build the benchmarks and tests. At runtime, put `build\vcpkg_installed\x64-windows\bin` and the
 CUDA `bin` directory on `PATH`. Build details and the Windows-specific changes are in
-[WINDOWS_PORT.md](WINDOWS_PORT.md).
+[WINDOWS_PORT.md](WINDOWS_PORT.md). For a self-contained, step-by-step build walkthrough on a
+Windows 11 `sm_89` machine -- installing vcpkg, loading the VS/CUDA toolchain, configuring for
+128 SMs (RTX 4090) or 80 SMs (the author's 32 GB RTX 4080 SUPER), running tests, verifying
+`NINFER_TARGET_SM_COUNT`
+and packaging both variants -- see the
+[Windows source build manual](ninfer-windows-build-manual.md) (Chinese).
 
 ### 2. Download a model
 
@@ -500,6 +505,7 @@ The full protocol reference, including every field and error code, is in
 | CLI options | [docs/cli.md](docs/cli.md) |
 | HTTP server and protocols | [docs/serving.md](docs/serving.md) |
 | Windows build, Qwen3.8 measurements and experiments | [WINDOWS_PORT.md](WINDOWS_PORT.md) |
+| Step-by-step Windows source build manual (`sm_89`, Chinese) | [ninfer-windows-build-manual.md](ninfer-windows-build-manual.md) |
 | Ternary Bonsai design, kernels and measurements | [docs/maintainer/bonsai-ternary-design.md](docs/maintainer/bonsai-ternary-design.md) |
 | Ternary Bonsai conversion and tensor mapping | [docs/maintainer/bonsai-ternary-conversion.md](docs/maintainer/bonsai-ternary-conversion.md) |
 | Weight conversion and custom recipes | [docs/weight-conversion.md](docs/weight-conversion.md) |
