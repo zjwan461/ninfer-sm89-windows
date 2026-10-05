@@ -72,7 +72,7 @@ echo Model: %MODEL%
 "%NINFER_SERVER%" "%MODEL%" ^
   --host 127.0.0.1 --port 8080 --model-id bonsai-27b ^
   --max-context 262144 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
-  --prefill-chunk 1408 ^
+  --prefill-chunk 1408 --default-max-tokens 32768 ^
   --spec mtp --draft-tokens 2 --lm-head-draft --ngram chain --vision %EXTRA% %NINFER_SERVE_ARGS%
 set "SERVE_EXIT=%ERRORLEVEL%"
 pause

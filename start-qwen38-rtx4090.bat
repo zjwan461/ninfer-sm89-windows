@@ -74,6 +74,7 @@ echo Model: %MODEL%
   --host 127.0.0.1 --port 8080 --model-id qwen3.8-27b ^
   --max-context 100000 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
   --max-pending-requests 10 --pending-timeout-ms 600000 --prefill-chunk 1408 ^
+  --default-max-tokens 32768 ^
   --spec mtp --draft-tokens 3 --lm-head-draft --ngram chain --preserve-thinking ^
   --device-state-slots 3 --host-state-slots 4 --host-kv-mib 4096 %EXTRA% %NINFER_SERVE_ARGS%
 set "SERVE_EXIT=%ERRORLEVEL%"
