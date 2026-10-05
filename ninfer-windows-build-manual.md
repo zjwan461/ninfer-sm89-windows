@@ -210,9 +210,29 @@ cmake --build build-4080s -j
 - 编译选项（`/Zc:preprocessor`、`/utf-8`、`/NODEFAULTLIB:LIBCMT`）已在 CMakeLists 配好，**不要手动增删**。
 - Ninja 下链接使用单槽 `ninfer_link` 池，属正常现象。
 
-### 第 5 步 · 运行时 PATH
+### 第 5 步 · 运行时 PATH（通常**不需要**做）
 
-CUDA 运行时是**静态链接**的，但 vcpkg 的 DLL 是动态的，运行前需把构建目录里的 vcpkg bin 加进 PATH：
+**先别做这一步。** `VCPKG_APPLOCAL_DEPS=ON`（vcpkg 在 Windows 上的默认值）会在构建时对每个 exe 运行 `vcpkg z-applocal`，把该 exe 依赖的 DLL 复制到 **exe 同目录**；而 Windows 的 DLL 搜索顺序默认就包含该目录。所以编译完直接跑即可：
+
+```
+build-4080s\apps\ninfer-serve.exe          ← 直接运行
+build-4080s\apps\avcodec-62.dll            ← app-local 复制进来的依赖
+build-4080s\apps\libcurl.dll  swscale-9.dll  z.dll  ...
+```
+
+> 想自证：`dir build-4080s\apps\*.dll` 会看到上面这一小撮（`vcpkg_installed\x64-windows\bin` 里的 `avdevice / avfilter / pkgconf` 运行时并不需要）；`build.ninja` 里每个 exe 的 `POST_BUILD` 就是那条 `vcpkg.exe z-applocal` 命令。
+
+CUDA 侧同样不需要：Windows 走的是**静态** CUDA 运行时（`CMakeLists.txt:78-82` → `CUDA::cudart_static`），且工程没有引用 cublas / cufft / cusparse —— `%CUDA_PATH%\bin` 只对**编译期**有意义。
+
+只有下列情况才需要手动补 PATH（或把 DLL 一起拷过去）：
+
+| 情况 | 处理 |
+|---|---|
+| 把 exe 单独拷到别处（没带同目录的 DLL） | 连 DLL 一起拷，或加 PATH |
+| 构建时关了 app-local（`-DVCPKG_APPLOCAL_DEPS=OFF`），或换了不支持该 POST_BUILD 机制的生成器/工具链 | 加 PATH |
+| 缺的是没被 app-local 复制进来的 DLL（如 `pkgconf-8.dll`，构建工具，一般运行不需要） | 加 PATH |
+
+兜底命令：
 
 ```bat
 set "PATH=<repo>\build-4080s\vcpkg_installed\x64-windows\bin;%CUDA_PATH%\bin;%PATH%"
@@ -329,7 +349,7 @@ findstr /C:"NINFER_TARGET_SM_COUNT=80" build-4080s\compile_commands.json
 | 改过 CUDA 编译器后报错 | 旧 build 目录绑定了旧编译器 | 删掉 build 目录重新 configure |
 | `max_context exceeds the configured position capacity` | `--max-context` 超过了 artifact 声明的位置容量（Qwen3.8 / Bonsai 都是 **262144**，因果 attention 的分块几何也以 262144 keys 为上限） | 把 `--max-context` 设在 262144 以内；要冲顶就把 `--max-concurrency` 降到 1 并去掉 host spill 档 |
 | 请求期报 `context_length_exceeded`（而启动正常） | `--kv-capacity auto` 按实测显存解出的 KV 容量小于 `--max-context` | 看启动日志 `KV <tokens>, ..., auto \| pages a/b`；调低 `--max-context` / 并发，或减小 `--host-kv-mib` 对显存的占用 |
-| 运行时报缺 DLL | vcpkg bin 不在 PATH | 见 §3 第 5 步设置运行时 PATH |
+| 运行时报缺 DLL | app-local 部署没生效，或 exe 被拷离了同目录 DLL | 先 `dir <build-dir>\apps\*.dll` 看 exe 同目录是否已有依赖；确实缺了才按 §3 第 5 步的兜底命令加 PATH |
 | 链接报 LIBCMT 冲突 | 手动改了链接选项 | 恢复仓库默认（`/NODEFAULTLIB:LIBCMT` 已在 CMakeLists 中） |
 
 ---
@@ -485,8 +505,9 @@ cmake -S . -B build-4080s -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DCMAKE_CUDA_COMPILER="%CUDA_PATH%/bin/nvcc.exe"
 cmake --build build-4080s -j
 
-:: 3) 运行前 PATH
-set "PATH=E:\workspaces\ai\ninfer-sm89-windows\build-4080s\vcpkg_installed\x64-windows\bin;%CUDA_PATH%\bin;%PATH%"
+:: 3) 直接运行即可：DLL 已由 app-local 复制到 build-4080s\apps\（见 §3 第 5 步）
+::    仅当 exe 被拷到别处 / app-local 被关掉时，才需要这行兜底：
+:: set "PATH=E:\workspaces\ai\ninfer-sm89-windows\build-4080s\vcpkg_installed\x64-windows\bin;%CUDA_PATH%\bin;%PATH%"
 ```
 
 一键脚本的等价调用（§8，可选）：
