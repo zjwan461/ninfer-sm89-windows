@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NInfer Launcher</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">N</span>
+    <span class="name">NInfer Launcher</span>
+    <span class="ver" id="version"></span>
+  </div>
+  <div class="status">
+    <span id="status-pill" class="pill pill-idle">读取中…</span>
+    <span id="status-detail" class="muted"></span>
+  </div>
+  <div class="actions">
+    <button id="btn-start" class="btn btn-primary">启动</button>
+    <button id="btn-stop" class="btn">停止</button>
+    <button id="btn-kill-external" class="btn btn-danger" hidden>终止占用进程</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab-btn active" data-tab="overview">总览</button>
+  <button class="tab-btn" data-tab="config">配置</button>
+  <button class="tab-btn" data-tab="logs">日志</button>
+  <button class="tab-btn" data-tab="test">测试</button>
+</nav>
+
+<main>
+  <!-- ================================================================ 总览 -->
+  <section id="tab-overview" class="tab active">
+    <div class="grid grid-4">
+      <article class="card">
+        <h3>状态</h3>
+        <div class="metric" id="ov-state">—</div>
+        <div class="sub" id="ov-uptime">—</div>
+      </article>
+      <article class="card">
+        <h3>模型</h3>
+        <div class="metric small" id="ov-model">—</div>
+        <div class="sub mono" id="ov-artifact">—</div>
+      </article>
+      <article class="card">
+        <h3>显存</h3>
+        <div class="metric" id="ov-vram">—</div>
+        <div class="bar"><div class="bar-fill" id="ov-vram-bar" style="width:0%"></div></div>
+        <div class="sub" id="ov-vram-sub">—</div>
+      </article>
+      <article class="card">
+        <h3>服务</h3>
+        <div class="links" id="ov-links">
+          <a href="#" target="_blank" rel="noopener" data-link="base">/v1</a>
+          <a href="#" target="_blank" rel="noopener" data-link="monitor">/monitor</a>
+          <a href="#" target="_blank" rel="noopener" data-link="metrics">/metrics</a>
+          <a href="#" target="_blank" rel="noopener" data-link="health">/health</a>
+        </div>
+        <div class="sub mono" id="ov-endpoint">—</div>
+      </article>
+    </div>
+
+    <article class="card">
+      <h3>运行指标 <span class="muted small" id="ov-monitor-stamp"></span></h3>
+      <div class="grid grid-4 tight">
+        <div><div class="k">prefill</div><div class="v" id="ov-prefill">—</div></div>
+        <div><div class="k">decode</div><div class="v" id="ov-decode">—</div></div>
+        <div><div class="k">KV 页占用</div><div class="v" id="ov-kv">—</div></div>
+        <div><div class="k">调度 in-flight</div><div class="v" id="ov-sched">—</div></div>
+        <div><div class="k">累计请求</div><div class="v" id="ov-requests">—</div></div>
+        <div><div class="k">前缀缓存命中</div><div class="v" id="ov-cache">—</div></div>
+        <div><div class="k">草稿接受率</div><div class="v" id="ov-draft">—</div></div>
+        <div><div class="k">上下文上限</div><div class="v" id="ov-ctx">—</div></div>
+      </div>
+      <details class="spoiler">
+        <summary>槽位与最近请求</summary>
+        <div id="ov-slots"></div>
+        <div id="ov-recent"></div>
+      </details>
+    </article>
+
+    <article class="card">
+      <h3>当前命令行 <button class="btn btn-mini" id="btn-copy-cmd">复制</button></h3>
+      <pre class="code" id="ov-cmd">（尚未启动）</pre>
+    </article>
+
+    <article class="card">
+      <h3>最近日志 <a href="#" class="muted small" data-goto="logs">查看全部 →</a></h3>
+      <pre class="code log-mini" id="ov-log"></pre>
+    </article>
+  </section>
+
+  <!-- ================================================================ 配置 -->
+  <section id="tab-config" class="tab">
+    <article class="card">
+      <div class="profile-bar">
+        <label class="inline">档案</label>
+        <select id="profile-select" class="select"></select>
+        <button class="btn btn-mini" id="btn-profile-load">载入</button>
+        <button class="btn btn-mini" id="btn-profile-save">另存为…</button>
+        <button class="btn btn-mini" id="btn-profile-delete">删除</button>
+        <button class="btn btn-mini" id="btn-profile-bat">导出 .bat</button>
+        <button class="btn btn-mini" id="btn-profile-presets">恢复内置预设</button>
+        <span class="muted small" id="profile-status"></span>
+      </div>
+    </article>
+
+    <div id="form"></div>
+
+    <article class="card">
+      <h3>校验</h3>
+      <div id="validation" class="validation"><div class="muted">—</div></div>
+      <details class="spoiler" open>
+        <summary>命令行预览</summary>
+        <pre class="code" id="cmdline">—</pre>
+      </details>
+      <div class="form-actions">
+        <button class="btn btn-primary" id="btn-start-2">启动 serve</button>
+        <button class="btn" id="btn-stop-2">停止 serve</button>
+        <span class="muted small" id="dirty-hint"></span>
+      </div>
+    </article>
+  </section>
+
+  <!-- ================================================================ 日志 -->
+  <section id="tab-logs" class="tab">
+    <article class="card log-card">
+      <div class="log-bar">
+        <input id="log-filter" class="input" type="search" placeholder="过滤关键字…">
+        <label class="inline"><input type="checkbox" id="log-autoscroll" checked> 自动滚动</label>
+        <label class="inline"><input type="checkbox" id="log-pause"> 暂停</label>
+        <button class="btn btn-mini" id="btn-log-clear">清空</button>
+        <button class="btn btn-mini" id="btn-log-download">下载</button>
+        <span class="muted small" id="log-count"></span>
+      </div>
+      <pre class="code log-full" id="log-view"></pre>
+    </article>
+  </section>
+
+  <!-- ================================================================ 测试 -->
+  <section id="tab-test" class="tab">
+    <article class="card">
+      <h3>发送一次聊天请求</h3>
+      <div class="test-form">
+        <label class="inline">提示词</label>
+        <textarea id="test-prompt" class="input" rows="3" placeholder="用一句话解释前缀缓存。"></textarea>
+        <div class="row">
+          <label class="inline">max_tokens <input id="test-max-tokens" class="input num" type="number" value="256" min="1"></label>
+          <label class="inline">temperature <input id="test-temperature" class="input num" type="number" value="0.7" step="0.05" min="0"></label>
+          <button class="btn btn-primary" id="btn-test-send">发送</button>
+          <span class="muted small" id="test-status"></span>
+        </div>
+      </div>
+    </article>
+    <article class="card">
+      <h3>回答</h3>
+      <pre class="code answer" id="test-answer">—</pre>
+      <div class="grid grid-4 tight" id="test-timings">
+        <div><div class="k">prefill</div><div class="v" id="tt-prefill">—</div></div>
+        <div><div class="k">decode</div><div class="v" id="tt-decode">—</div></div>
+        <div><div class="k">缓存复用</div><div class="v" id="tt-cache">—</div></div>
+        <div><div class="k">草稿接受</div><div class="v" id="tt-draft">—</div></div>
+      </div>
+    </article>
+  </section>
+</main>
+
+<datalist id="models-list"></datalist>
+<datalist id="auto-list">
+  <option value="auto"></option>
+</datalist>
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -178,6 +178,23 @@ Invoke-RestMethod -Uri http://127.0.0.1:8080/v1/chat/completions -Method Post `
 Any OpenAI- or Anthropic-compatible client (OpenCode, Claude Code through a proxy, LiteLLM, Open
 WebUI, the `openai` Python package) works with the same URL.
 
+### 5. Or configure everything in a local WebUI
+
+`start-launcher.bat` opens a WebUI on `http://127.0.0.1:8100` that builds the same command line
+from a form, starts and stops `ninfer-serve.exe`, streams its log and shows the live monitor
+counters, with the four `start-*.bat` configurations imported as presets:
+
+```bat
+start-launcher.bat              :: 8100, opens the browser
+start-launcher.bat --port 8101  :: another UI port
+```
+
+It needs Python 3.10+; when the machine has none, the launcher downloads python.org's embeddable
+Python once into `%LOCALAPPDATA%\NInfer-Launcher\runtime` and installs its dependencies there, so
+no system Python is touched (`HTTPS_PROXY` is honored for slow networks). The launcher listens on
+`127.0.0.1` only and never changes the engine. Details and the full parameter reference:
+[docs/launcher.md](docs/launcher.md).
+
 ## Performance
 
 Conditions for every table below: RTX 4090 at stock clocks, Core i9-13900K, Windows 11, driver

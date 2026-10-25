@@ -12,6 +12,7 @@ card (RTX 4090 or RTX 4080 SUPER) on native Windows.
 | [Prebuilt releases](https://github.com/zjwan461/ninfer-sm89-windows/releases) | Windows x64 binaries with DLLs, launchers and licenses |
 | [CLI](cli.md) | text, chat-history, image/video input, output streams, sampling, MTP, and common runtime options |
 | [HTTP serving](serving.md) | OpenAI Responses/Chat Completions, Anthropic Messages, state, streaming, token counting, authentication, and tool calls |
+| [Launcher (WebUI)](launcher.md) | local WebUI that configures serve flags, starts/stops the server, and shows logs, monitor stats and a built-in test request |
 | [Comparison with llama.cpp](llamacpp-comparison.md) | same-machine prefill comparison on the RTX 4090 (2026-09-26) and the earlier Linux comparison |
 | [Performance (upstream, RTX 5090)](performance.md) | the upstream engine's RTX 5090 serving measurements and publication rules; RTX 4090 figures are in the README and WINDOWS_PORT |
 | [Weight conversion](weight-conversion.md) | official recipes, custom formats and sources, conversion methods, optional components and artifact output |
