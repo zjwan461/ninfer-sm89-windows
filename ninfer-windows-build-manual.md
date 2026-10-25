@@ -48,6 +48,7 @@ cmake --build build-4080s -j
 
 > `NINFER_TARGET_SM_COUNT` 是本 fork 新增的编译开关：它只决定 attention wave 几何按多少 SM 编译（**不是架构开关**，架构恒为 `sm_89`）。合法值必须是**偶数且 ≥ 66**，否则 configure 期与编译期都会报错。128 与 80 两档在任意 `sm_89` 卡上都能跑，只是档位与卡不匹配时会损失一点波次利用率，不影响正确性。
 > 编译产物**互不影响**：两档用不同输出目录，可同时保留做 A/B。
+> 需要逐算子基准（`ninfer_linear_bench` 等）时另行加 `-DNINFER_BUILD_BENCHMARKS=ON`；该开关默认关闭，所以默认构建里没有 `bench/*.exe`。4080S（80 SM）上的实测基线、逐算子带宽与两个已定位的问题见 `NINFER_4080S_BASELINE.md`。
 
 **重要**：仓库自带的 `CMakePresets.json` **只含构建选项，不含工具链路径**（vcpkg / CUDA / 编译器），因此有两种用法：
 - **用法 A（主推，最直观）**：不用 preset，直接敲完整 `-D` 命令（见 §3 第 3 步）。

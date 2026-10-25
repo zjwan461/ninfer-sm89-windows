@@ -5,22 +5,30 @@ rem Tuned for the RTX 4080 SUPER profile (NINFER_TARGET_SM_COUNT=80, written for
 rem see start-qwen38-rtx4090.bat for the 128-SM RTX 4090 build.
 rem
 rem Differences from the 4090 pair:
-rem   * --prefill-chunk 1024 (SM-dependent: the 80-SM wave geometry fills more easily with the
-rem     smaller chunk; the 4090 pair uses 1408),
-rem   * --max-context 131072 (VRAM-dependent: this profile targets 32 GB; the 4090 pair keeps the
-rem     artifact-validated 100000).
+rem   * --prefill-chunk 1024 (measured on this card, 3 runs each: 512 -> 3.26k tok/s,
+rem     1024 -> 3.41k, 2048 -> 3.40k, 4096 -> 3.39k -- flat above 1024, so keep the smallest
+rem     value that saturates; the 4090 pair uses 1408),
+rem   * --max-context 262144 with --max-concurrency 2 (VRAM-dependent: this profile targets
+rem     32 GB; the 4090 pair keeps the artifact-validated 100000).
+rem
+rem Measured on a 32 GB RTX 4080 SUPER (see NINFER_4080S_BASELINE.md):
+rem   ctx 262144 + conc 2 -> 29.5 GB peak, 73 tok/s single request, 103 tok/s aggregate on 2
+rem   ctx 131072 + conc 4 -> 30.0 GB peak, 127 tok/s aggregate on 4
+rem   ctx 131072 + conc 3 -> 27.5 GB peak (the older default; strictly less context per byte)
+rem so 262144 / 2 is the long-context default here. If you would rather have four concurrent
+rem short sessions, use: --max-context 131072 --max-concurrency 4.
 rem
 rem --max-context ceiling is 262144: the artifact declares max_position_embeddings = 262144 and the
 rem causal geometry stages at most kCausalSmallTMaxKeys = 262144 keys, so a larger value is
-rem rejected at startup. Reaching 262144 requires dropping --max-concurrency to 1 and removing the
-rem host spill flags below, because KV scales linearly with max_context and concurrency 3 means up
-rem to three full-length caches on top of ~19 GiB of weights. 100000 is what the model card
-rem validated; 131072 is the conservative step taken here.
+rem rejected at startup. max_context * max_concurrency is what the KV pool has to hold, so
+rem 262144 with concurrency 2 is the largest pairing that fits 32 GB.
 rem
 rem The KV pool follows the measured free VRAM (--kv-capacity auto): check the startup log line
 rem "capacity | KV <tokens>, ..., auto | pages a/b" and make sure the resolved token count is >=
 rem --max-context. Add --vision for image input, and --no-cuda-graph if long speculative runs ever
-rem crash. The host spill flags below suit a 24 GB card; a card with more VRAM can drop
+rem crash. The host spill flags below are host RAM, not VRAM; they are a fallback for session
+rem persistence and do not change the GPU footprint (measured 24.5 GB with and without them at the
+rem same concurrency).
 rem --host-kv-mib / --host-state-slots.
 rem
 rem Usage:
@@ -89,7 +97,7 @@ echo Starting Qwen3.8-27B at http://127.0.0.1:8080/v1
 echo Model: %MODEL%
 "%NINFER_SERVER%" "%MODEL%" ^
   --host 127.0.0.1 --port 8080 --model-id qwen3.8-27b ^
-  --max-context 131072 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
+  --max-context 262144 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 2 ^
   --max-pending-requests 10 --pending-timeout-ms 600000 --prefill-chunk 1024 ^
   --default-max-tokens 32768 ^
   --spec mtp --draft-tokens 3 --lm-head-draft --ngram chain --preserve-thinking ^

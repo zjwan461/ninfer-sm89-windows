@@ -772,6 +772,11 @@ void validate_target_options(const execution::Parameters& parameters, DeviceCont
     if (options.prefill_chunk == 0 || options.prefill_chunk % kPrefillChunkAlignment != 0) {
         throw std::invalid_argument("prefill_chunk must be a nonzero multiple of 128");
     }
+    if (options.prefill_chunk > kPrefillChunkMaximum) {
+        throw std::invalid_argument(
+            "prefill_chunk must be <= 4096; 1024 is the measured optimum on sm_89 "
+            "(prefill is flat above it, and the workspace grows with the chunk)");
+    }
     if (options.max_concurrency == 0 || options.max_concurrency > kMaximumConcurrency) {
         throw std::invalid_argument("max_concurrency must be in [1,8]");
     }

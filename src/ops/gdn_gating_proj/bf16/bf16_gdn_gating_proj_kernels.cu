@@ -357,10 +357,39 @@ bool launch_bf16_prefill_mma(Bf16GdnGatingTokenVariant variant, const Tensor& x,
     } else {
         constexpr std::int64_t kCtasPerTokenTile =
             static_cast<std::int64_t>(Geometry::kHeads / kBf16GdnBlockM) * SplitK;
-        constexpr std::int32_t kResidentCtasPerSm =
-            cooperative_resident_ctas_per_sm<Geometry, SplitK>();
+        // Ask the driver how many of THIS kernel's blocks really fit per SM instead of trusting
+        // `cooperative_resident_ctas_per_sm()`'s compile-time estimate. That estimate was
+        // qualified on a different card; on an 80-SM build the widest instantiation gets fewer,
+        // and a cooperative launch fails outright once the token range is split into more pieces
+        // than the device can co-schedule. On the RTX 4080 SUPER that showed up as a 0xC0000409
+        // abort at --prefill-chunk >= 1792 whenever the prompt actually split.
+        //
+        // Both token-variant instantiations are queried and the smaller figure is used, because
+        // the variant is only known inside `launch_problem`.
+        const std::int64_t resident_ctas_per_sm = [&]() -> std::int64_t {
+            int occ_full = 0;
+            int occ_pred = 0;
+            const cudaError_t q_full = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &occ_full,
+                bf16_gdn_gating_proj_gemm_mma_kernel<Geometry, SplitK, true, Warps, NormalizeInput,
+                                                     NormTokenCapacity>,
+                block.x, static_cast<std::size_t>(kSmemBytes));
+            const cudaError_t q_pred = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &occ_pred,
+                bf16_gdn_gating_proj_gemm_mma_kernel<Geometry, SplitK, false, Warps,
+                                                     NormalizeInput, NormTokenCapacity>,
+                block.x, static_cast<std::size_t>(kSmemBytes));
+            if (q_full != cudaSuccess || q_pred != cudaSuccess) {
+                // Fall back to the historical compile-time figure rather than refusing to run.
+                (void)cudaGetLastError();
+                return static_cast<std::int64_t>(
+                    cooperative_resident_ctas_per_sm<Geometry, SplitK>());
+            }
+            const int both = std::min(occ_full, occ_pred);
+            return static_cast<std::int64_t>(both > 0 ? both : 1);
+        }();
         const std::int64_t resident_ctas =
-            static_cast<std::int64_t>(multiprocessor_count) * kResidentCtasPerSm;
+            static_cast<std::int64_t>(multiprocessor_count) * resident_ctas_per_sm;
         const std::int64_t max_token_tiles = resident_ctas / kCtasPerTokenTile;
         if (max_token_tiles < 1) { return false; }
 

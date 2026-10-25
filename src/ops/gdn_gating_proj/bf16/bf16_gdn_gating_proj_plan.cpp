@@ -118,6 +118,14 @@ constexpr bool catalog_is_resident(const std::array<RouteSpec, N>& routes, std::
     return true;
 }
 
+// NOTE (4080S, 2026-10-25): the 128 below is the RTX 4090 SM count. Substituting
+// kTargetSmCount makes the 80-SM build fail this assert, i.e. the 27B cooperative route
+// catalog is NOT resident-safe on 80 SMs at its upper bound. That is the root cause of the
+// 0xC0000409 abort at --prefill-chunk >= 1792 (the split budget assumes 2 resident CTAs per
+// SM, which the widest route does not actually get). The argument validation now caps
+// prefill_chunk at 1536 (kPrefillChunkMaximum); making the runtime budget use
+// cudaOccupancyMaxActiveBlocksPerMultiprocessor instead of the hardcoded per-SM figure is the
+// real fix and is still open.
 static_assert(catalog_is_resident(k27Routes, 128, 3, resident_ctas_27),
               "a 27B cooperative route exceeds the sm_89 resident-CTA budget at its upper bound");
 static_assert(catalog_is_resident(k35Routes, 64, 2, resident_ctas_35),

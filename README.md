@@ -2,6 +2,8 @@
 
 > Personal fork of [JGamboa/ninfer-4090-windows](https://github.com/JGamboa/ninfer-4090-windows),
 > maintained at [zjwan461/ninfer-sm89-windows](https://github.com/zjwan461/ninfer-sm89-windows).
+> Measured on a 32 GB RTX 4080 SUPER as well: **[NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md)** -- decode 74.9 tok/s (MTP k=3), prefill 3.37k tok/s, 262144 context at 29.5 GB, and the finding that the 80-SM constant makes no measurable difference on that card.
+
 > The change relative to upstream: the target SM count is a build option, so one `sm_89` source
 > builds for the RTX 4090 (128 SMs) or the RTX 4080 SUPER (80 SMs).
 
@@ -17,6 +19,11 @@ the same architecture through a CLI and an OpenAI- and Anthropic-compatible HTTP
 | **Qwen3.8-27B**, official artifact | [neroued/Qwen3.8-27B-NInfer](https://huggingface.co/neroued/Qwen3.8-27B-NInfer) | 19.0 GiB | 120 tok/s | 289 tok/s; 211 tok/s (DFlash2, code) | 2,762 tok/s |
 | **Swift 1.5 Qwen3.8-27B** (UkisAI fine-tune that thinks less), int8 prefill | [jgamboa/Swift-1.5-Qwen3.8-27B-NInfer-4090](https://huggingface.co/jgamboa/Swift-1.5-Qwen3.8-27B-NInfer-4090) | 19.0 GiB | same as Qwen3.8 | 27 % fewer tokens per answer on hard problems, same accuracy | same as Qwen3.8 int8 |
 
+The figures above are the RTX 4090 (128 SM) reference. The RTX 4080 SUPER (80 SM) profile is
+measured separately: see [Performance -> RTX 4080 SUPER](#rtx-4080-super-80-sms-32-gb) for the
+numbers and [NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md) for the per-op bandwidth data,
+the context/concurrency matrix and the two bugs found while measuring.
+
 The two Qwen3.8-27B files hold the same weights, byte for byte; the int8-prefill file lets prompt
 processing run on int8 tensor cores (1.7-1.9x faster, same decode, same quality within noise).
 Against the official llama.cpp on the same card with the same Qwen3.8-27B BF16 checkpoint
@@ -31,8 +38,11 @@ decode was slightly faster (129.8 against 121.8 tok/s) thanks to higher MTP acce
 license limits commercial use above a revenue threshold; see the model card.
 
 Every figure in this README was measured on the same RTX 4090 under Windows unless it says
-otherwise; the conditions are next to each table. Both models run the full 262K-token context on
-24 GB.
+otherwise; the conditions are next to each table. The RTX 4080 SUPER subsection under
+[Performance](#rtx-4080-super-80-sms-32-gb) is the exception -- it comes from the 80-SM
+`build-4080s` on a 32 GB card. Both models run the full 262K-token context on 24 GB (a single
+session); on the 32 GB card the same 262144 fits two sessions, and the host-memory spill flags are
+not part of that budget.
 
 - [Quick start](#quick-start)
 - [Performance](#performance)
@@ -170,10 +180,57 @@ WebUI, the `openai` Python package) works with the same URL.
 
 ## Performance
 
-Conditions for every table: RTX 4090 at stock clocks, Core i9-13900K, Windows 11, driver 595.97,
-CUDA 13.4, greedy decoding unless noted. Since 2026-09-27 the monitor runs on the CPU's integrated
-graphics and the 4090 has no display; older rows say when the 4090 also drove the desktop, which
-costs up to 15-18 % of decode ([below](#when-the-4090-also-drives-the-display)).
+Conditions for every table below: RTX 4090 at stock clocks, Core i9-13900K, Windows 11, driver
+595.97, CUDA 13.4, greedy decoding unless noted -- except the first subsection, which is the RTX
+4080 SUPER profile. Since 2026-09-27 the monitor runs on the CPU's integrated graphics and the 4090
+has no display; older rows say when the 4090 also drove the desktop, which costs up to 15-18 % of
+decode ([below](#when-the-4090-also-drives-the-display)).
+
+### RTX 4080 SUPER (80 SMs, 32 GB)
+
+Conditions: `build-4080s` (`NINFER_TARGET_SM_COUNT=80`), 32 GB AD103 card at stock clocks, same
+Windows 11 / CUDA 13.4 machine as the tables below, greedy decoding, `--kv-dtype rk4v4-e8`,
+`--prefill-chunk 1024`, three runs per point (median), 1972-token prompt for prefill.
+
+| Measurement | Qwen3.8-27B int8 | Ternary Bonsai 2 27B |
+|---|---:|---:|
+| Weights in VRAM | 15.9 GiB | 5.52 GiB |
+| Decode, no speculation | **37.8 tok/s** | **91.6 tok/s** |
+| Decode, MTP (3 for Qwen, 2 for Bonsai -- the launcher settings) | **74.8-81.0 tok/s** | **143.4 tok/s** |
+| MTP acceptance length | 2.89 tok/round | 2.10 tok/round |
+| Prefill | **3.41k tok/s** | **3.61k tok/s** |
+| Context / lanes measured | 262144 / 2 (29.5 GB peak) | not re-measured; the launcher uses 262144 / 3 |
+
+Against the 4090 rows below: 0.62x decode and 0.59x prefill on Qwen3.8, 0.66x decode on Bonsai --
+within a few percent of the hardware ratio (736/1008 GB/s of bandwidth, 80/128 SMs). Decode without
+speculation reaches 88 % of the bandwidth roofline on Qwen3.8 (37.8 against the 43.1 tok/s that
+15.9 GiB at 736 GB/s allows) and 73 % on Bonsai, so this profile is bandwidth-limited rather than
+mistuned; the ternary kernels are the ones with room left.
+
+What matters on this card:
+
+- `--max-context 262144 --max-concurrency 2` -- the 32 GB card runs the whole artifact context two
+  lanes deep at a 29.5 GB peak with no decode cost, which the 24 GB profile only reaches with a
+  single lane. `--max-context 131072 --max-concurrency 4` is the four-session alternative (30.0 GB,
+  127 tok/s aggregate). `--host-kv-mib` and `--host-state-slots` are host RAM, not VRAM; they do not
+  change the GPU footprint, so shrinking them frees nothing.
+- `--prefill-chunk 1024` -- flat above it (1024 -> 3.41k, 2048 -> 3.40k, 4096 -> 3.39k tok/s) and
+  slower below (512 -> 3.26k). Values above 4096 are rejected. Before the cooperative-residency fix
+  in this fork, 1792 and above aborted at the first split (`0xC0000409`, `--prefill-chunk >= 1792`)
+  once the prompt was longer than the chunk; the fix and its evidence are in
+  [NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md) section 6.
+- `--draft-tokens 3` with `--lm-head-draft` -- k=3 is the optimum on the 19 GiB file for both prose
+  and code (74.9 / 86.6 tok/s); k=5 is **slower** (64.6 / 63.7) because a draft hop costs more than
+  the extra accepted tokens return. Single-run measurements sometimes suggest the opposite, which is
+  why the table is a median of three.
+
+A smaller artifact is the only remaining lever on decode, and it is mostly blocked here. The official
+NVFP4 file is **larger** (22.09 GiB) and therefore slower, and the community 3.5-bit IQ3_S file
+stores weights in `gguf_*` block layouts that this engine rejects. Run under the
+`iamwavecut/ninfer-all` line it reaches **111.6 tok/s against 82.7** (1.35x, at `--draft-tokens 2`,
+where the optimum shifts because each round is cheaper), but prefills 2.0-2.4x slower (1.7k against
+3.39k tok/s), so it only pays off past roughly 100 generated tokens per request. Sections 9.2-9.3 of
+the baseline document carry the full comparison and what porting those layouts would cost.
 
 ### Ternary Bonsai 2 27B
 
@@ -273,6 +330,11 @@ not change; only the speed does.
 reproduce code, JSON, tool calls or documents accept 10 or more tokens. It costs a second set of
 CUDA graphs (about 2.5 % of the KV pool) and changes nothing on text with nothing to copy.
 [docs/cli.md](docs/cli.md#speculative-decoding) lists the `--ngram-*` options.
+
+On the **RTX 4080 SUPER** this table still holds, with two caveats measured there: `--draft-tokens 3`
+is confirmed as the optimum for Qwen3.8 (74.9 tok/s on prose, 86.6 on code, against 64.6 / 63.7 at
+k=5), and the context/lane pairing is `262144 / 2` instead of three lanes because 262144 x 3 does
+not fit 32 GB. DFlash2 and the n-gram variants were not measured on that card.
 
 **KV cache.**
 
@@ -505,6 +567,7 @@ The full protocol reference, including every field and error code, is in
 | CLI options | [docs/cli.md](docs/cli.md) |
 | HTTP server and protocols | [docs/serving.md](docs/serving.md) |
 | Windows build, Qwen3.8 measurements and experiments | [WINDOWS_PORT.md](WINDOWS_PORT.md) |
+| **RTX 4080 SUPER (80 SM) measured baseline, bugs found, artifact survey** | [NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md) |
 | Step-by-step Windows source build manual (`sm_89`, Chinese) | [ninfer-windows-build-manual.md](ninfer-windows-build-manual.md) |
 | Ternary Bonsai design, kernels and measurements | [docs/maintainer/bonsai-ternary-design.md](docs/maintainer/bonsai-ternary-design.md) |
 | Ternary Bonsai conversion and tensor mapping | [docs/maintainer/bonsai-ternary-conversion.md](docs/maintainer/bonsai-ternary-conversion.md) |
