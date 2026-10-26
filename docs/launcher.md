@@ -71,9 +71,27 @@ start-launcher.bat
 
 界面会做这些校验（阻止启动）：并发必须是 1–8；选了 `--spec` 必须填 `--draft-tokens`（DFlash2 为
 1–15）；`--auto-save-evicted` 需要 `--slot-save-path`；`--default-thinking-budget` 不能与
-`--no-thinking` 同用。以下只提示不阻止：`--max-context` 超过 262144、`--draft-tokens` 没配
-`--spec`、n-gram 子参数没开 `chain`、`--vision-max-tokens` 没开 `--vision`、`--greedy` 与
-temperature 同时设置。
+`--no-thinking` 同用。以下只提示不阻止：`--draft-tokens` 没配 `--spec`、n-gram 子参数没开
+`chain`、`--vision-max-tokens` 没开 `--vision`、`--greedy` 与 temperature 同时设置。
+
+### artifact 能力校验
+
+`--spec`、`--vision`、`--lm-head-draft` 都要求 `.ninfer` 产物里带对应组件；缺失时引擎在加载阶段
+直接 `FATAL ... missing component <name>`，整个启动白跑一次。启动器读产物的目录 JSON（复用
+`tools/artifact` 的读取器，不解析权重），在模型文件下方显示组件，并在表单里禁用不可用项：
+
+| 参数 | 需要的组件 |
+|---|---|
+| `--spec mtp` | `mtp` |
+| `--spec dflash` | `dflash`（v1，面向 35B-A3B 产物） |
+| `--spec dflash2` | `dflash2` |
+| `--vision` | `vision` |
+| `--lm-head-draft` | `text` 组件里的 `proposal` 段（不是顶层组件） |
+
+形状示例：`bonsai2_27b_vl_mtp_q4q5.ninfer` 只有 `mtp`/`text`/`vision`，所以 Bonsai 只能
+`--spec mtp`；`qwen3_8_27b_a8.ninfer` 带 `mtp` 与 `dflash2`，可用 `--spec dflash2`，但
+`--spec dflash` 会被拒绝。`--max-context` 也会对照产物声明的 `max_position_embeddings` 校验，
+超过直接报错而不是等 serve 拒绝。
 
 ## 档案（profile）
 

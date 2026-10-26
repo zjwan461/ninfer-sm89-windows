@@ -97,13 +97,23 @@
 
   /* ------------------------------------------------------------ 初始化 */
 
+  // 角标显示的是「引擎构建」：dist 变体自己戳的标签（0.6.1-rtx4080s）或构建目录名。
+  // 仓库根的 VERSION 是上游 RTX 3090 的标签，不能拿来做本 fork 的构建标识。
+  function renderBuild(build) {
+    const node = $("#version");
+    if (!node) return;
+    node.textContent = build ? "引擎 " + build : "";
+    node.title = build ? "当前引擎构建：" + build : "";
+    node.hidden = !build;
+  }
+
   async function init() {
     try {
       const [schema, settings] = await Promise.all([api("/api/schema"), api("/api/settings")]);
       state.schema = schema;
       state.fields = schema.fields;
       state.fieldByKey = Object.fromEntries(schema.fields.map((f) => [f.key, f]));
-      $("#version").textContent = "v" + schema.version;
+      renderBuild(schema.build);
       state.values = { ...schema.defaults };
       if (settings.last_values && Object.keys(settings.last_values).length) {
         Object.assign(state.values, settings.last_values);
@@ -111,6 +121,7 @@
       buildForm();
       buildModelsDatalist(schema.models_roots);
       bindEvents();
+      refreshArtifactInfo();
       await refreshProfiles();
       await refreshModels();
       await refreshStatus();
@@ -167,6 +178,12 @@
     const control = document.createElement("div");
     control.className = "control";
     control.appendChild(buildControl(field));
+    if (field.key === "artifact") {
+      const hint = document.createElement("div");
+      hint.className = "artifact-hint";
+      hint.id = "artifact-hint";
+      control.appendChild(hint);
+    }
 
     row.appendChild(label);
     row.appendChild(control);
@@ -267,6 +284,7 @@
     if (!field) return;
     state.values[key] = readControl(field);
     updateVisibility();
+    if (key === "artifact") scheduleArtifactInfo();
     schedulePreview();
   }
 
@@ -295,7 +313,68 @@
       else node.value = value === null || value === undefined ? "" : String(value);
     }
     updateVisibility();
+    scheduleArtifactInfo();
     schedulePreview();
+  }
+
+  /* --------------------------------------------------- artifact 能力探测 */
+
+  // 引擎按组件名取权重：--spec 要 mtp/dflash/dflash2、--vision 要 vision、
+  // --lm-head-draft 要 proposal。缺失时在加载阶段就直接 FATAL，这里提前提示并禁用。
+  const scheduleArtifactInfo = debounce(() => { refreshArtifactInfo(); }, 350);
+
+  async function refreshArtifactInfo() {
+    const node = $("#artifact-hint");
+    if (!node) return;
+    const path = state.values.artifact;
+    if (!path) {
+      node.textContent = "";
+      node.className = "artifact-hint";
+      applyArtifactCapabilities(null);
+      return;
+    }
+    try {
+      const info = await api("/api/artifact?path=" + encodeURIComponent(path));
+      if (!info.ok) {
+        node.className = "artifact-hint warn";
+        node.textContent = "无法读取 artifact：" + (info.error || "未知错误");
+        applyArtifactCapabilities(null);
+        return;
+      }
+      const parts = ["组件：" + (info.components.join(", ") || "无")];
+      if (info.architecture) parts.push("架构 " + info.architecture);
+      if (info.max_context) parts.push("上下文上限 " + info.max_context);
+      if (info.name) parts.push(info.name);
+      node.className = "artifact-hint";
+      node.textContent = parts.join(" · ");
+      applyArtifactCapabilities(info);
+    } catch (error) {
+      node.className = "artifact-hint warn";
+      node.textContent = "读取 artifact 失败：" + error.message;
+      applyArtifactCapabilities(null);
+    }
+  }
+
+  function applyArtifactCapabilities(info) {
+    const spec = document.getElementById("f-spec");
+    if (spec) {
+      const allowed = info && info.ok ? new Set(info.speculative_backends) : null;
+      for (const option of spec.options) {
+        if (!option.value) continue;
+        const supported = !allowed || allowed.has(option.value);
+        option.disabled = !supported;
+        option.title = supported ? "" : "该 artifact 不含此组件";
+      }
+    }
+    for (const [key, supported] of [["vision", info.components.includes("vision")], ["lm_head_draft", info.proposal]]) {
+      const node = document.getElementById("f-" + key);
+      if (!node || !info || !info.ok) {
+        if (node) { node.disabled = false; node.title = ""; }
+        continue;
+      }
+      node.disabled = !supported;
+      node.title = supported ? "" : "该 artifact 不含 " + (key === "vision" ? "vision" : "proposal") + " 组件";
+    }
   }
 
   const schedulePreview = debounce(() => { renderPreview(); }, 280);
@@ -366,6 +445,7 @@
     const pill = $("#status-pill");
     pill.textContent = label;
     pill.className = "pill " + klass;
+    renderBuild(status.build);
 
     const detail = [];
     if (status.pid) detail.push(`PID ${status.pid}`);

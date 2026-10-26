@@ -225,3 +225,111 @@ def test_display_command_quotes_spaces(tmp_path: Path) -> None:
 )
 def test_split_extra_args(text: str, expected: list[str]) -> None:
     assert config.split_extra_args(text) == expected
+
+
+# ------------------------------------------------------------ 引擎构建标识
+
+
+def test_engine_identity_prefers_variant_version(tmp_path: Path) -> None:
+    variant = tmp_path / "dist" / "ninfer-sm89-windows-x64-0.6.1" / "sm80-rtx4080s"
+    variant.mkdir(parents=True)
+    (variant / "VERSION").write_text("0.6.1-rtx4080s\n", encoding="utf-8")
+    exe = variant / "ninfer-serve.exe"
+    exe.write_bytes(b"x")
+    assert config.engine_identity(str(exe)) == "0.6.1-rtx4080s"
+
+
+def test_engine_identity_never_reports_upstream_tag(tmp_path: Path) -> None:
+    """build 目录没有 VERSION 时退化为目录名，不能拿仓库根的 0.6.1-rtx3090。"""
+
+    apps = tmp_path / "build-4080s" / "apps"
+    apps.mkdir(parents=True)
+    exe = apps / "ninfer-serve.exe"
+    exe.write_bytes(b"x")
+    identity = config.engine_identity(str(exe))
+    assert identity == "build-4080s"
+    assert "rtx3090" not in identity
+
+
+def test_engine_identity_empty_without_engine() -> None:
+    assert config.engine_identity(None) == ""
+    assert config.engine_identity("") == ""
+
+
+# --------------------------------------------------------- artifact 能力校验
+
+
+def _info(components: tuple[str, ...], proposal: bool = True) -> config.ArtifactInfo:
+    return config.ArtifactInfo(path="x.ninfer", ok=True, components=components, proposal=proposal)
+
+
+def test_capability_errors_blocks_missing_spec_component() -> None:
+    """Bonsai 只有 mtp：--spec dflash / dflash2 必须被拦住（引擎会 FATAL: missing component）。"""
+
+    bonsai = _info(("mtp", "proposal", "text", "vision"))
+    errors = config.capability_errors({"spec": "dflash", "draft_tokens": 2}, bonsai)
+    assert len(errors) == 1
+    assert "dflash" in errors[0]
+    assert "mtp" in errors[0]
+
+    assert config.capability_errors({"spec": "mtp", "draft_tokens": 2}, bonsai) == []
+
+
+def test_capability_errors_allows_qwen_dflash2() -> None:
+    qwen = _info(("dflash2", "mtp", "proposal", "text", "vision"))
+    assert config.capability_errors({"spec": "dflash2", "draft_tokens": 7}, qwen) == []
+    # DFlash（v1）面向 35B-A3B，Qwen3.8 产物里没有该组件。
+    errors = config.capability_errors({"spec": "dflash", "draft_tokens": 7}, qwen)
+    assert len(errors) == 1 and "dflash2" in errors[0]
+
+
+def test_capability_errors_vision_and_proposal() -> None:
+    text_only = _info(("mtp", "text"), proposal=False)
+    errors = config.capability_errors({"vision": True, "lm_head_draft": True, "spec": "mtp"}, text_only)
+    assert any("vision" in error for error in errors)
+    assert any("proposal" in error for error in errors)
+
+
+def test_capability_errors_accepts_proposal_section() -> None:
+    with_proposal = _info(("mtp", "text"), proposal=True)
+    assert config.capability_errors({"lm_head_draft": True, "spec": "mtp", "draft_tokens": 3}, with_proposal) == []
+
+
+def test_inspect_artifact_reports_error_for_non_artifact(tmp_path: Path) -> None:
+    bogus = tmp_path / "bogus.ninfer"
+    bogus.write_bytes(b"not a v3 artifact")
+    info = config.inspect_artifact(str(bogus))
+    assert info.ok is False
+    assert info.error
+
+
+def test_validate_warns_when_artifact_unreadable(tmp_path: Path) -> None:
+    values = _values(tmp_path)  # _touch 写入的是假产物，读取器会拒绝
+    errors, warnings = config.validate(values)
+    assert not any("组件" in error for error in errors)
+    assert any("跳过能力校验" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize(
+    "filename, required, forbidden",
+    [
+        ("bonsai2_27b_vl_mtp_q4q5.ninfer", ("mtp", "vision"), ("dflash", "dflash2")),
+        ("qwen3_8_27b_a8.ninfer", ("mtp", "dflash2"), ("dflash",)),
+    ],
+)
+def test_local_artifacts_component_surface(
+    filename: str, required: tuple[str, ...], forbidden: tuple[str, ...]
+) -> None:
+    """对真实产物核对组件面；本机没有该产物时跳过。"""
+
+    path = config.resolve_artifact(filename)
+    if not Path(path).is_file():
+        pytest.skip(f"{filename} not present")
+    info = config.inspect_artifact(path)
+    assert info.ok, info.error
+    for component in required:
+        assert component in info.components, (filename, info.components)
+    for component in forbidden:
+        assert component not in info.components, (filename, info.components)
+    assert info.proposal is True
+    assert info.max_context is not None

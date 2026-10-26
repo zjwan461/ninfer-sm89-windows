@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,8 +32,6 @@ from tools.launcher import config  # noqa: E402
 from tools.launcher.process import GpuMonitor, LogBus, ServeManager, kill_pid, port_in_use  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-
-VERSION = (config.REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip() if (config.REPO_ROOT / "VERSION").is_file() else "?"
 
 
 # --------------------------------------------------------------------- 请求模型
@@ -96,25 +94,46 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
             await gpu.stop()
             await manager.shutdown()
 
-    app = FastAPI(title="NInfer Launcher", version=VERSION, lifespan=lifespan)
+    app = FastAPI(title="NInfer Launcher", lifespan=lifespan)
     app.state.logbus = logbus
     app.state.manager = manager
     app.state.gpu = gpu
     app.state.store = store
 
     # ------------------------------------------------------------- 静态页面
+    # 本地工具：页面资源一律禁止缓存，且资源 URL 带修改时间戳，改完代码刷新即生效。
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/static"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+    async def index() -> HTMLResponse:
+        """index.html 里的 asset URL 附上 mtime，旧缓存不会继续生效。"""
+
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        stamp = 0
+        for asset in ("app.js", "styles.css"):
+            try:
+                stamp = max(stamp, int((STATIC_DIR / asset).stat().st_mtime))
+            except OSError:
+                pass
+        html = html.replace("/static/app.js", f"/static/app.js?v={stamp}")
+        html = html.replace("/static/styles.css", f"/static/styles.css?v={stamp}")
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
 
     # ------------------------------------------------------------ 元信息
     @app.get("/api/schema")
     async def schema() -> dict[str, Any]:
         settings = store.settings
         return {
-            "version": VERSION,
+            # 引擎构建标识（不是仓库根的 VERSION：那是上游 RTX 3090 的标签）。
+            "build": config.engine_identity(settings["engine_binary"]),
             "ui_port": settings["ui_port"],
             "groups": [{"id": gid, "title": title} for gid, title in config.GROUPS],
             "fields": [fld.to_json() for fld in config.FIELDS],
@@ -139,6 +158,13 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
         root_list = [item for item in (roots or ",").split(",") if item.strip()] if roots else settings["models_roots"]
         return {"roots": root_list, "models": config.scan_models(root_list)}
 
+    @app.get("/api/artifact")
+    async def artifact(path: str = Query(...)) -> dict[str, Any]:
+        """artifact 的组件/架构/上下文上限，供表单提示与能力校验。"""
+
+        info = await asyncio.to_thread(config.inspect_artifact, path)
+        return info.to_json()
+
     # ------------------------------------------------------------- 命令行预览
     @app.post("/api/preview")
     async def preview(body: ValuesBody) -> dict[str, Any]:
@@ -159,7 +185,8 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
         snapshot = manager.snapshot()
         snapshot["gpu"] = gpu.snapshot()
         snapshot["ui_port"] = store.settings["ui_port"]
-        snapshot["version"] = VERSION
+        engine = snapshot["argv"][0] if snapshot["argv"] else store.settings["engine_binary"]
+        snapshot["build"] = config.engine_identity(engine)
         return snapshot
 
     @app.post("/api/start")

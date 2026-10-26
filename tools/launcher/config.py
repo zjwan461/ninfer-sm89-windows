@@ -366,6 +366,50 @@ def launcher_home() -> Path:
     return Path(base) / "NInfer-Launcher"
 
 
+def engine_identity(engine_binary: str | None) -> str:
+    """引擎的构建标识（界面角标用），绝不拿上游 VERSION 冒充本 fork 的构建。
+
+    仓库根的 ``VERSION`` 按 ``scripts/package-release-*.ps1`` 的注释就是上游 RTX 3090 的
+    标签，因此这里只认三种来源：
+
+    1. 引擎同目录的 ``VERSION``（``dist/.../sm80-rtx4080s/VERSION`` → ``0.6.1-rtx4080s``）；
+    2. ``dist/<包>/VERSION``（产品级标签 ``0.6.1-sm89``），且引擎确实位于该 dist 包内；
+    3. 都不匹配时退化为构建目录名（``build-4080s``），不臆造版本号。
+    """
+
+    if not engine_binary:
+        return ""
+    path = Path(engine_binary)
+
+    sibling = path.parent / "VERSION"
+    if sibling.is_file():
+        try:
+            text = sibling.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        except OSError:
+            pass
+
+    dist_root = REPO_ROOT / "dist"
+    relative = None
+    if dist_root.is_dir():
+        try:
+            relative = path.resolve().relative_to(dist_root.resolve())
+        except (ValueError, OSError):
+            relative = None
+    if relative is not None and len(relative.parts) >= 3:
+        package_version = dist_root / relative.parts[0] / "VERSION"
+        if package_version.is_file():
+            try:
+                text = package_version.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+            except OSError:
+                pass
+
+    return path.parent.parent.name or path.parent.name
+
+
 def default_engine_binary() -> str:
     """按优先级探测本机引擎二进制（NINFER_SERVER 优先，其次仓库内构建产物）。"""
 
@@ -485,6 +529,130 @@ def expand_artifact(path: str) -> str:
         except OSError:
             pass
     return path
+
+
+# ---------------------------------------------------------------- artifact 能力
+
+
+@dataclass(frozen=True)
+class ArtifactInfo:
+    """从 v3 artifact 目录里读到的最小能力信息（组件、架构、上下文上限）。"""
+
+    path: str
+    ok: bool
+    name: str = ""
+    components: tuple[str, ...] = ()
+    architecture: str = ""
+    max_context: int | None = None
+    #: ``--lm-head-draft`` 用的是 text 组件里的 proposal 成员，不是顶层组件。
+    proposal: bool = False
+    error: str = ""
+
+    @property
+    def speculative_backends(self) -> tuple[str, ...]:
+        return tuple(name for name in ("mtp", "dflash", "dflash2") if name in self.components)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "ok": self.ok,
+            "name": self.name,
+            "components": list(self.components),
+            "speculative_backends": list(self.speculative_backends),
+            "architecture": self.architecture,
+            "max_context": self.max_context,
+            "proposal": self.proposal,
+            "error": self.error,
+        }
+
+
+#: (路径, mtime_ns, 大小) → 能力信息；读目录 JSON 很便宜，但表单预览会频繁调用。
+_ARTIFACT_CACHE: dict[tuple[str, int, int], ArtifactInfo] = {}
+
+
+def inspect_artifact(path: str) -> ArtifactInfo:
+    """用项目自带的 artifact 读取器列组件；失败只返回错误，不抛异常。"""
+
+    resolved = expand_artifact(path)
+    if not resolved:
+        return ArtifactInfo(path="", ok=False, error="未选择模型文件")
+    try:
+        stat = Path(resolved).stat()
+    except OSError as exc:
+        return ArtifactInfo(path=resolved, ok=False, error=f"无法访问：{exc}")
+
+    key = (resolved, stat.st_mtime_ns, stat.st_size)
+    cached = _ARTIFACT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        from tools.artifact.reader import Artifact  # 延迟导入：仅在选择模型文件时需要
+    except Exception as exc:  # noqa: BLE001 - 读取器缺失不应让 launcher 起不来
+        return ArtifactInfo(path=resolved, ok=False, error=f"artifact 读取器不可用：{exc}")
+
+    try:
+        artifact = Artifact(resolved)
+    except Exception as exc:  # noqa: BLE001 - 非 v3 产物、损坏文件都走这里
+        return ArtifactInfo(path=resolved, ok=False, error=str(exc))
+
+    try:
+        components = tuple(sorted(artifact.directory.components))
+        name = str(artifact.directory.metadata.get("name") or "")
+        text_component = artifact.directory.components.get("text") or {}
+        text_config = text_component.get("config") or {} if isinstance(text_component, dict) else {}
+        proposal = bool(isinstance(text_component, dict) and text_component.get("proposal"))
+        architectures = text_config.get("architectures") or []
+        architecture = str(architectures[0]) if architectures else ""
+        max_context = text_config.get("max_position_embeddings")
+        max_context = int(max_context) if isinstance(max_context, (int, float)) else None
+    except Exception as exc:  # noqa: BLE001
+        return ArtifactInfo(path=resolved, ok=False, error=f"无法解析 artifact 目录：{exc}")
+    finally:
+        try:
+            artifact.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    info = ArtifactInfo(
+        path=resolved,
+        ok=True,
+        name=name,
+        components=components,
+        architecture=architecture,
+        max_context=max_context,
+        proposal=proposal,
+    )
+    _ARTIFACT_CACHE[key] = info
+    return info
+
+
+def capability_errors(values: dict[str, Any], info: ArtifactInfo) -> list[str]:
+    """按 artifact 实际组件校验 --spec / --vision / --lm-head-draft。
+
+    引擎在加载阶段用 ``directory.component(name)`` 取组件，缺失就抛
+    ``missing component <name>``；提前在这里拦住可以省掉一次几十秒的加载失败。
+    """
+
+    errors: list[str] = []
+    components = info.components
+    available = "、".join(components) if components else "无"
+
+    if values.get("vision") and "vision" not in components:
+        errors.append(f"该 artifact 不含 vision 组件，不能启用 --vision（组件：{available}）")
+
+    spec = str(values.get("spec") or "")
+    if spec and spec not in components:
+        backends = info.speculative_backends
+        hint = "、".join(backends) if backends else "无"
+        errors.append(f"该 artifact 不含 {spec} 组件，不能使用 --spec {spec}（可用投机后端：{hint}）")
+
+    if values.get("lm_head_draft") and not info.proposal:
+        errors.append(
+            f"该 artifact 的 text 组件没有 proposal 段，不能使用 --lm-head-draft（组件：{available}）"
+        )
+
+    return errors
 
 
 # --------------------------------------------------------------------- 命令行
@@ -642,6 +810,15 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
     elif not Path(artifact).is_file():
         errors.append(f"模型文件不存在：{artifact}")
 
+    # artifact 能力校验：--spec / --vision / --lm-head-draft 都要求产物里带对应组件，
+    # 缺失时引擎会在加载阶段直接拒绝启动，这里提前拦住。
+    info = inspect_artifact(artifact) if artifact and Path(artifact).is_file() else None
+    if info is not None:
+        if info.ok:
+            errors.extend(capability_errors(values, info))
+        else:
+            warnings.append(f"无法读取 artifact 组件，跳过能力校验（{info.error}）")
+
     def as_int(key: str) -> int | None:
         value = values.get(key)
         if value is None or value == "":
@@ -659,9 +836,14 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
     if context is not None:
         if context < 1:
             errors.append("最大上下文必须 ≥ 1")
+        elif info is not None and info.ok and info.max_context:
+            if context > info.max_context:
+                errors.append(
+                    f"最大上下文 {context} 超过 artifact 声明的上限 {info.max_context}"
+                )
         elif context > CONTEXT_CEILING:
             warnings.append(
-                f"最大上下文 {context} 超过 {CONTEXT_CEILING}：artifact 声明上限，服务可能拒绝启动"
+                f"最大上下文 {context} 超过 {CONTEXT_CEILING}：artifact 常见上限，服务可能拒绝启动"
             )
 
     kv_capacity = values.get("kv_capacity")
