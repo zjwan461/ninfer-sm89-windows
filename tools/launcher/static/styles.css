@@ -80,6 +80,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; }
 .pill-starting{ background: #3a2f16; color: var(--amber); border-color: #5d4a20; animation: pulse 1.4s ease-in-out infinite; }
 .pill-ready   { background: #12332a; color: var(--green); border-color: #1d5a48; }
 .pill-crashed { background: #3a1a1e; color: var(--red); border-color: #5d2830; }
+.pill-paused  { background: #2c2416; color: var(--amber); border-color: #4a3a1c; }
 .pill-external{ background: #1b2a3f; color: var(--accent); border-color: #274869; }
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
@@ -284,6 +285,22 @@ details.advanced > summary { cursor: pointer; color: var(--accent); font-size: 1
 .line.launcher { color: var(--accent); }
 .line.error { color: var(--red); }
 .line.warn { color: var(--amber); }
+
+/* ------------------------------------------------------------- 自定义参数 */
+.custom-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.custom-row .input[data-field="flag"] { width: 240px; }
+.custom-row .input[data-field="value"] { flex: 1; max-width: 480px; }
+
+/* ------------------------------------------------------------- 下载 */
+.dl-form { display: flex; flex-direction: column; gap: 10px; }
+.dl-form .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.select.grow { flex: 1; min-width: 260px; }
+.grow { flex: 1; }
+.dl-job { border-top: 1px solid var(--line-soft); padding: 12px 0; }
+.dl-job:first-child { border-top: none; }
+.dl-job-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.dl-job .bar { margin: 0 0 6px; }
+.dl-job .sub { margin-top: 2px; }
 
 /* ------------------------------------------------------------- 测试 */
 .answer { min-height: 160px; white-space: pre-wrap; }

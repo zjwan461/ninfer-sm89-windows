@@ -310,6 +310,60 @@ def test_validate_warns_when_artifact_unreadable(tmp_path: Path) -> None:
     assert any("跳过能力校验" in warning for warning in warnings)
 
 
+# ------------------------------------------------------------ 自定义参数行
+
+
+def test_custom_args_are_appended_in_order(tmp_path: Path) -> None:
+    values = _values(
+        tmp_path,
+        custom_args=[
+            {"flag": "--experimental-thing", "value": "42"},
+            {"flag": "--another-flag", "value": ""},
+        ],
+    )
+    argv = config.build_argv(values)
+    assert argv[-3:] == ["--experimental-thing", "42", "--another-flag"]
+
+
+def test_custom_args_precede_extra_args(tmp_path: Path) -> None:
+    values = _values(
+        tmp_path,
+        custom_args=[{"flag": "--one", "value": "1"}],
+        extra_args="--two 2",
+    )
+    argv = config.build_argv(values)
+    assert argv[-4:] == ["--one", "1", "--two", "2"]
+
+
+def test_custom_args_validation() -> None:
+    rows, errors = config.normalize_custom_args([{"flag": "-x", "value": ""}])
+    assert rows == [] and any("--flag" in error for error in errors)
+
+    rows, errors = config.normalize_custom_args([{"flag": "", "value": "x"}])
+    assert rows == [] and errors == []  # 空行静默忽略
+
+    rows, errors = config.normalize_custom_args("not-a-list")
+    assert rows == [] and errors
+
+
+def test_validate_warns_on_custom_arg_duplicates(tmp_path: Path) -> None:
+    values = _values(
+        tmp_path,
+        custom_args=[{"flag": "--port", "value": "9999"}, {"flag": "--port", "value": "1"}],
+    )
+    errors, warnings = config.validate(values)
+    assert errors == []
+    joined = " ".join(warnings)
+    assert "重名" in joined and "重复" in joined
+
+
+def test_normalize_keeps_custom_args() -> None:
+    normalized, errors = config.normalize({"custom_args": [{"flag": "--foo", "value": "bar"}]})
+    assert errors == []
+    assert normalized["custom_args"] == [{"flag": "--foo", "value": "bar"}]
+    assert config.default_values()["custom_args"] == []
+
+
 @pytest.mark.parametrize(
     "filename, required, forbidden",
     [

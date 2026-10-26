@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -28,6 +29,58 @@ UI_PORT = 8100
 
 #: 上下文超过该值时给出警告（Qwen3.8/Bonsai 的 artifact 声明上限，serve 会拒绝更大值）。
 CONTEXT_CEILING = 262144
+
+#: 模型下载使用的 Hugging Face 端点与镜像。
+DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+HF_MIRRORS: tuple[tuple[str, str], ...] = (
+    ("https://huggingface.co", "huggingface.co（官方）"),
+    ("https://hf-mirror.com", "hf-mirror.com（国内镜像）"),
+)
+
+#: 「下载」页的官方产物清单。体积取自 Hugging Face 仓库里的实际文件大小
+#: （2026-10 核对），``preset`` 是开箱可用的内置档案（空表示要用同架构档案换 artifact）。
+MODEL_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "label": "Ternary Bonsai 2 27B（文本+视觉+MTP）",
+        "repo": "jgamboa/Ternary-Bonsai-2-27B-NInfer-4090",
+        "filename": "bonsai2_27b_vl_mtp_q4q5.ninfer",
+        "size_gib": 6.4,
+        "preset": "Bonsai2-27B VL · 4080s",
+        "note": "Q4/Q5 三元权重 + vision + MTP；只支持 --spec mtp（可直接用内置预设）",
+    },
+    {
+        "label": "Qwen3.8-27B int8 prefill（推荐）",
+        "repo": "jgamboa/Qwen3.8-27B-NInfer-4090",
+        "filename": "qwen3_8_27b_a8.ninfer",
+        "size_gib": 19.03,
+        "preset": "Qwen3.8-27B int8 · 4080s",
+        "note": "Q4/Q5 权重 + int8 prefill，带 MTP 与 DFlash2（可直接用内置预设）",
+    },
+    {
+        "label": "Qwen3.8-27B 官方产物（BF16 prefill）",
+        "repo": "neroued/Qwen3.8-27B-NInfer",
+        "filename": "qwen3_8_27b.ninfer",
+        "size_gib": 19.03,
+        "preset": "",
+        "note": "与 a8 版同一份权重，prefill 走 BF16（更慢）；载入 Qwen3.8 预设后换 artifact 即可",
+    },
+    {
+        "label": "Swift 1.5 Qwen3.8-27B（少思考微调）",
+        "repo": "jgamboa/Swift-1.5-Qwen3.8-27B-NInfer-4090",
+        "filename": "swift15_27b_a8.ninfer",
+        "size_gib": 19.03,
+        "preset": "",
+        "note": "UkisAI 微调，形状与 Qwen3.8 相同；载入 Qwen3.8 预设后换 artifact（建议 --model-id swift-1.5）",
+    },
+    {
+        "label": "Qwen3.6-35B-A3B（MoE，带 DFlash）",
+        "repo": "neroued/Qwen3.6-35B-A3B-NInfer",
+        "filename": "qwen3_6_35b_a3b.ninfer",
+        "size_gib": 21.22,
+        "preset": "",
+        "note": "MoE 产物：投机要用 --spec dflash --draft-tokens 7（没有 MTP）；本机 32 GB 需压小上下文",
+    },
+)
 
 GROUPS: tuple[tuple[str, str], ...] = (
     ("model", "模型"),
@@ -692,6 +745,39 @@ def format_number(value: float | int) -> str:
     return f"{value:g}"
 
 
+#: 自定义参数行：``--flag`` + 可选值。允许字母数字与连字符，避免把奇怪东西塞进 argv。
+_CUSTOM_FLAG = re.compile(r"^--[A-Za-z0-9][A-Za-z0-9-]*$")
+
+
+def normalize_custom_args(raw: Any) -> tuple[list[dict[str, str]], list[str]]:
+    """规范「自定义参数」列表；空行忽略，非法名字报错。"""
+
+    if not raw:
+        return [], []
+    if not isinstance(raw, list):
+        return [], ["自定义参数必须是 {flag, value} 列表"]
+
+    rows: list[dict[str, str]] = []
+    errors: list[str] = []
+    for entry in raw:
+        if isinstance(entry, str):
+            flag, value = entry.strip(), ""
+        elif isinstance(entry, dict):
+            flag = str(entry.get("flag") or "").strip()
+            value = entry.get("value")
+            value = "" if value is None else str(value).strip()
+        else:
+            errors.append("自定义参数行格式无效")
+            continue
+        if not flag:
+            continue
+        if not _CUSTOM_FLAG.match(flag):
+            errors.append(f"自定义参数名不合法：{flag}（要写成 --flag）")
+            continue
+        rows.append({"flag": flag, "value": value})
+    return rows, errors
+
+
 def build_argv(values: dict[str, Any], engine_binary: str | None = None) -> list[str]:
     """参数字典 → 完整 argv（不含 shell 引号）。"""
 
@@ -717,6 +803,12 @@ def build_argv(values: dict[str, Any], engine_binary: str | None = None) -> list
             argv.extend([fld.cli or "", format_number(number)])
         else:
             argv.extend([fld.cli or "", str(value).strip()])
+    # 自定义参数行：原样追加，顺序与界面一致。
+    rows, _ = normalize_custom_args(values.get("custom_args"))
+    for row in rows:
+        argv.append(row["flag"])
+        if row["value"]:
+            argv.append(row["value"])
     argv.extend(split_extra_args(str(values.get("extra_args") or "")))
     return argv
 
@@ -783,12 +875,16 @@ def normalize(values: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         except ValueError as exc:
             errors.append(str(exc))
             out[fld.key] = fld.default
+    rows, custom_errors = normalize_custom_args(values.get("custom_args"))
+    out["custom_args"] = rows
+    errors.extend(custom_errors)
     return out, errors
 
 
 def default_values(engine_binary: str | None = None) -> dict[str, Any]:
     values = {fld.key: fld.default for fld in FIELDS}
     values["engine_binary"] = engine_binary or default_engine_binary()
+    values["custom_args"] = []
     return values
 
 
@@ -896,6 +992,19 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
         value = as_int(key)
         if value is not None and value < 0:
             errors.append(f"{label}不能为负数")
+
+    # 自定义参数：与表单字段重名会生成两条相同开关，serve 只认最后一条。
+    rows, _ = normalize_custom_args(values.get("custom_args"))
+    if rows:
+        modelled = {fld.cli for fld in FIELDS if fld.cli}
+        seen: set[str] = set()
+        for row in rows:
+            flag = row["flag"]
+            if flag in modelled:
+                warnings.append(f"自定义参数 {flag} 与表单字段重名，命令行里会出现两次")
+            if flag in seen:
+                warnings.append(f"自定义参数 {flag} 重复出现")
+            seen.add(flag)
 
     return errors, warnings
 
@@ -1043,11 +1152,13 @@ class Store:
         settings.setdefault("engine_binary", default_engine_binary())
         settings.setdefault("models_roots", default_models_roots())
         settings.setdefault("last_values", {})
+        settings.setdefault("hf_endpoint", DEFAULT_HF_ENDPOINT)
+        settings.setdefault("hf_proxy", "")
         return settings
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         settings = self.settings
-        for key in ("ui_port", "engine_binary", "models_roots", "last_values"):
+        for key in ("ui_port", "engine_binary", "models_roots", "last_values", "hf_endpoint", "hf_proxy"):
             if key in patch:
                 settings[key] = patch[key]
         self._settings = settings

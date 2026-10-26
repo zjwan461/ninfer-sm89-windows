@@ -29,6 +29,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.launcher import config  # noqa: E402
+from tools.launcher.downloads import DownloadManager  # noqa: E402
 from tools.launcher.process import GpuMonitor, LogBus, ServeManager, kill_pid, port_in_use  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -50,6 +51,16 @@ class SettingsBody(BaseModel):
     ui_port: int | None = None
     engine_binary: str | None = None
     models_roots: list[str] | None = None
+    hf_endpoint: str | None = None
+    hf_proxy: str | None = None
+
+
+class DownloadBody(BaseModel):
+    repo: str
+    filename: str
+    dest_root: str | None = None
+    endpoint: str | None = None
+    proxy: str | None = None
 
 
 class ChatBody(BaseModel):
@@ -70,6 +81,7 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
     logbus = LogBus()
     manager = ServeManager(logbus, log_dir=store.home / "logs")
     gpu = GpuMonitor()
+    downloads = DownloadManager()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -92,6 +104,7 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
             yield
         finally:
             await gpu.stop()
+            await downloads.shutdown()
             await manager.shutdown()
 
     app = FastAPI(title="NInfer Launcher", lifespan=lifespan)
@@ -99,6 +112,7 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
     app.state.manager = manager
     app.state.gpu = gpu
     app.state.store = store
+    app.state.downloads = downloads
 
     # ------------------------------------------------------------- 静态页面
     # 本地工具：页面资源一律禁止缓存，且资源 URL 带修改时间戳，改完代码刷新即生效。
@@ -151,6 +165,59 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
     async def post_settings(body: SettingsBody) -> dict[str, Any]:
         patch = body.model_dump(exclude_none=True)
         return store.update_settings(patch)
+
+    # -------------------------------------------------------------- 模型下载
+    @app.get("/api/downloads")
+    async def list_downloads() -> dict[str, Any]:
+        settings = store.settings
+        return {
+            "endpoint": settings["hf_endpoint"],
+            "proxy": settings["hf_proxy"],
+            "mirrors": [{"value": url, "label": label} for url, label in config.HF_MIRRORS],
+            "catalog": [dict(item) for item in config.MODEL_CATALOG],
+            "roots": settings["models_roots"],
+            "jobs": downloads.snapshot(),
+        }
+
+    @app.post("/api/downloads")
+    async def start_download(body: DownloadBody) -> dict[str, Any]:
+        settings = store.settings
+        roots = settings["models_roots"]
+        dest_root = body.dest_root or (roots[0] if roots else str(config.REPO_ROOT / "models"))
+        endpoint = body.endpoint or settings["hf_endpoint"]
+        proxy = settings["hf_proxy"] if body.proxy is None else body.proxy.strip()
+        try:
+            job = downloads.start(body.repo, body.filename, dest_root, endpoint, proxy)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"errors": [str(exc)]}) from exc
+        store.update_settings({"hf_endpoint": endpoint, "hf_proxy": proxy})
+        suffix = f"（代理 {proxy}）" if proxy else "（直连/系统代理）"
+        logbus.append(f"开始下载 {body.repo}/{body.filename} → {job['dest']} {suffix}", "launcher")
+        return job
+
+    @app.post("/api/downloads/{job_id}/pause")
+    async def pause_download(job_id: str) -> dict[str, Any]:
+        if not downloads.pause(job_id):
+            raise HTTPException(status_code=409, detail={"errors": ["任务不在下载中"]})
+        return {"ok": True}
+
+    @app.post("/api/downloads/{job_id}/resume")
+    async def resume_download(job_id: str) -> dict[str, Any]:
+        if not await downloads.resume(job_id):
+            raise HTTPException(status_code=409, detail={"errors": ["任务无法继续（状态不支持）"]})
+        return {"ok": True}
+
+    @app.post("/api/downloads/{job_id}/cancel")
+    async def cancel_download(job_id: str) -> dict[str, Any]:
+        if not downloads.cancel(job_id):
+            raise HTTPException(status_code=409, detail={"errors": ["任务不存在或已结束"]})
+        return {"ok": True}
+
+    @app.post("/api/downloads/{job_id}/clear")
+    async def clear_download(job_id: str) -> dict[str, Any]:
+        if not downloads.clear(job_id):
+            raise HTTPException(status_code=409, detail={"errors": ["任务仍在进行中"]})
+        return {"ok": True}
 
     @app.get("/api/models")
     async def models(roots: str | None = Query(default=None)) -> dict[str, Any]:

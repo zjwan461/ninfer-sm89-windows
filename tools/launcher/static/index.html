@@ -27,6 +27,7 @@
 <nav class="tabs" id="tabs">
   <button class="tab-btn active" data-tab="overview">总览</button>
   <button class="tab-btn" data-tab="config">配置</button>
+  <button class="tab-btn" data-tab="download">下载</button>
   <button class="tab-btn" data-tab="logs">日志</button>
   <button class="tab-btn" data-tab="test">测试</button>
 </nav>
@@ -111,6 +112,13 @@
     <div id="form"></div>
 
     <article class="card">
+      <h3>自定义参数 <button class="btn btn-mini" id="btn-custom-add">+ 新增参数</button></h3>
+      <div class="muted small">按 <span class="mono">--flag [value]</span> 原样追加到命令行末尾（排在表单参数之后、额外参数之前）。
+        未知的 flag 会让 serve 启动时报错，删掉即可。用于 UI 还没收录的新开关。</div>
+      <div id="custom-args"></div>
+    </article>
+
+    <article class="card">
       <h3>校验</h3>
       <div id="validation" class="validation"><div class="muted">—</div></div>
       <details class="spoiler" open>
@@ -137,6 +145,39 @@
         <span class="muted small" id="log-count"></span>
       </div>
       <pre class="code log-full" id="log-view"></pre>
+    </article>
+  </section>
+
+  <!-- ================================================================ 下载 -->
+  <section id="tab-download" class="tab">
+    <article class="card">
+      <h3>下载模型</h3>
+      <div class="dl-form">
+        <div class="row">
+          <label class="inline">模型</label>
+          <select id="dl-preset" class="select grow"></select>
+        </div>
+        <div class="row" id="dl-custom" hidden>
+          <label class="inline">仓库 <input id="dl-repo" class="input mono" placeholder="owner/name"></label>
+          <label class="inline">文件 <input id="dl-file" class="input mono" placeholder="model.ninfer"></label>
+        </div>
+        <div class="row">
+          <label class="inline">保存到 <select id="dl-root" class="select"></select></label>
+          <label class="inline">镜像 <select id="dl-endpoint" class="select"></select></label>
+          <input id="dl-endpoint-custom" class="input mono" hidden placeholder="https://your-mirror.example">
+        </div>
+        <div class="row">
+          <label class="inline">代理 <input id="dl-proxy" class="input mono" size="34" placeholder="http://127.0.0.1:7897（留空=直连）"></label>
+          <label class="inline"><input type="checkbox" id="dl-proxy-enable"> 使用代理</label>
+          <button class="btn btn-primary" id="btn-dl-start">开始下载</button>
+        </div>
+        <div class="muted small" id="dl-note"></div>
+        <div class="muted small">代理留空时直连；如果启动器进程本身带着 <span class="mono">HTTPS_PROXY</span> 环境变量，会自动沿用。</div>
+      </div>
+    </article>
+    <article class="card">
+      <h3>下载任务</h3>
+      <div id="dl-jobs"><div class="muted">暂无任务</div></div>
     </article>
   </section>
 

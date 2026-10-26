@@ -51,10 +51,34 @@ start-launcher.bat
 |---|---|
 | 总览 | 状态卡片（已停止/加载中/运行中/已崩溃/外部实例）、当前命令行、显存占用、`/v1` `/monitor` `/metrics` `/health` 链接、prefill/decode 速率、KV 页占用、草稿接受率、槽位与最近请求 |
 | 配置 | 按组生成的参数表单（常规项直出、高级项折叠）、档案管理、命令行预览、校验结果 |
+| 下载 | 从 Hugging Face（或镜像）拉取 `.ninfer` 产物：内置官方清单、自定义 `owner/name`、断点续传、进度/速度/剩余时间、完成后一键设为当前模型 |
 | 日志 | serve 实时日志（SSE）+ 启动器事件，关键词过滤、暂停、下载 |
 | 测试 | 向运行中的 serve 发一次聊天请求，流式显示思考与回答，并给出 `timings`（prefill/decode tok/s、缓存复用、草稿接受） |
 
 启动前会显示**完整命令行预览**；未填写的参数不会出现在命令行里，交给 serve 用自己的缺省值。
+
+## 下载模型
+
+「下载」页把 README 里的产物清单做成了下拉：Bonsai 2 27B、Qwen3.8-27B int8 prefill、Qwen3.8-27B 官方、
+Swift 1.5、Qwen3.6-35B-A3B；也可以选「自定义」填任意 `owner/name` + 仓库内文件名。
+
+- 走 `https://huggingface.co/<repo>/resolve/main/<file>`；镜像可选 `hf-mirror.com` 或自定义端点
+  （上一次选择会记进 `settings.json` 的 `hf_endpoint`）；
+- 用 HTTP Range **断点续传**，与 `scripts/download-*.bat` 的 `curl -C -` 等价；
+- **暂停/继续**：`下载中` 点「暂停」会在当前分块处停下（文件句柄正常关闭，已下载字节保留），
+  状态变为 `已暂停`；点「继续」从磁盘上已有的字节处发 `Range` 接着下载。失败或取消的任务同样
+  可以「继续续传」，不会重新从 0 开始；
+- 进度条显示 已下载/总量、EMA 速度与剩余时间；任务最多两个并发，可取消（保留已下载部分）或清除；
+- 下载完成点「设为当前模型」会把文件路径写进配置页的模型字段并刷新能力提示。
+
+**代理**：页面提供「使用代理」开关 + 地址输入（例如 `http://127.0.0.1:7897`）。留空表示直连；
+如果启动器进程本身带着 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量，httpx 会自动沿用。选择和地址
+记进 `settings.json` 的 `hf_proxy`，下次打开保持。
+
+清单里前两项有配套的内置预设（Bonsai、Qwen3.8 int8）；「官方 BF16 prefill」和「Swift 1.5」
+与 Qwen3.8 同架构同形状，载入 Qwen3.8 预设后换个 artifact 即可；「Qwen3.6-35B-A3B」是 MoE，
+投机要用 `--spec dflash --draft-tokens 7`（没有 MTP），32 GB 卡上还要压小上下文——这三项没有
+开箱预设，页面里的说明会写清楚。
 
 ## 参数分组
 
@@ -68,6 +92,15 @@ start-launcher.bat
 | 网络、日志与媒体 | `--host`、`--port`、`--api-key`、`--cors`、`--log-level`、请求日志、媒体缓存上限（高级） |
 
 参数名与合法值以 `ninfer-serve.exe --help` 为准；已退役的 `--turn-checkpoints` 不出现在界面里。
+
+### 自定义参数
+
+表单没收录的开关（未来的新参数，或一次性的实验 flag）可以在「自定义参数」里逐行添加：
+`--flag` + 可选值。它们按界面顺序追加在表单参数之后、`额外参数` 之前，随档案一起保存。
+
+- flag 必须以 `--` 开头且只含字母数字与连字符，否则校验报错；
+- 与表单字段重名（例如又写一条 `--port`）会给出警告——命令行里会出现两次，serve 只认最后一条；
+- 未知 flag 由 serve 在启动时拒绝（`unknown option`），删掉那一行即可，不会影响其它参数。
 
 界面会做这些校验（阻止启动）：并发必须是 1–8；选了 `--spec` 必须填 `--draft-tokens`（DFlash2 为
 1–15）；`--auto-save-evicted` 需要 `--slot-save-path`；`--default-thinking-budget` 不能与
@@ -92,6 +125,10 @@ start-launcher.bat
 `--spec mtp`；`qwen3_8_27b_a8.ninfer` 带 `mtp` 与 `dflash2`，可用 `--spec dflash2`，但
 `--spec dflash` 会被拒绝。`--max-context` 也会对照产物声明的 `max_position_embeddings` 校验，
 超过直接报错而不是等 serve 拒绝。
+
+不支持的能力不是"灰一下"就算：**切换模型时表单会自动纠正**已选的值（例如从 Qwen 的
+`--spec dflash2` 切到 Bonsai 会自动改成 `--spec mtp`，并提示原因；`--vision`/`--lm-head-draft`
+在不支持的产物上会被取消勾选），避免留下一个"看起来能选、启动必失败"的组合。
 
 ## 档案（profile）
 

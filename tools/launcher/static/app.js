@@ -121,6 +121,7 @@
       buildForm();
       buildModelsDatalist(schema.models_roots);
       bindEvents();
+      renderCustomArgs();
       refreshArtifactInfo();
       await refreshProfiles();
       await refreshModels();
@@ -129,6 +130,8 @@
       connectLogs();
       setInterval(refreshStatus, 1000);
       setInterval(refreshMonitor, 2000);
+      setInterval(() => { refreshDownloads(false); }, 1000);
+      refreshDownloads(true);
     } catch (error) {
       toast("初始化失败：" + error.message, "err");
     }
@@ -312,9 +315,58 @@
       if (field.kind === "bool") node.checked = value === true;
       else node.value = value === null || value === undefined ? "" : String(value);
     }
+    state.values.custom_args = Array.isArray(values.custom_args)
+      ? values.custom_args.map((row) => ({ flag: row.flag || "", value: row.value || "" }))
+      : [];
+    renderCustomArgs();
     updateVisibility();
     scheduleArtifactInfo();
     schedulePreview();
+  }
+
+  /* -------------------------------------------------- 自定义参数（UI 未收录） */
+
+  function renderCustomArgs() {
+    const host = $("#custom-args");
+    if (!host) return;
+    const rows = state.values.custom_args || [];
+    if (!rows.length) {
+      host.innerHTML = '<div class="muted small">还没有自定义参数</div>';
+      return;
+    }
+    host.innerHTML = rows.map((row, index) => `
+      <div class="custom-row" data-index="${index}">
+        <input class="input mono" data-field="flag" value="${esc(row.flag || "")}" placeholder="--flag">
+        <input class="input mono" data-field="value" value="${esc(row.value || "")}" placeholder="值（开关类可留空）">
+        <button class="btn btn-mini" data-act="remove-custom">删除</button>
+      </div>`).join("");
+  }
+
+  function addCustomArg() {
+    state.values.custom_args = [...(state.values.custom_args || []), { flag: "", value: "" }];
+    renderCustomArgs();
+    const inputs = $$("#custom-args input[data-field='flag']");
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }
+
+  function onCustomArgEvent(event) {
+    const row = event.target.closest(".custom-row");
+    if (!row) return;
+    const index = Number(row.dataset.index);
+    const rows = state.values.custom_args || [];
+    if (event.type === "input") {
+      const field = event.target.dataset.field;
+      if (field && rows[index]) {
+        rows[index][field] = event.target.value;
+        schedulePreview();
+      }
+      return;
+    }
+    if (event.target.closest("button[data-act='remove-custom']")) {
+      rows.splice(index, 1);
+      renderCustomArgs();
+      schedulePreview();
+    }
   }
 
   /* --------------------------------------------------- artifact 能力探测 */
@@ -342,6 +394,12 @@
         return;
       }
       const parts = ["组件：" + (info.components.join(", ") || "无")];
+      if (info.speculative_backends.length) {
+        parts.push("可用投机：" + info.speculative_backends.map((b) => b.toUpperCase()).join("/"));
+      } else {
+        parts.push("不支持投机解码");
+      }
+      if (!info.components.includes("vision")) parts.push("无视觉");
       if (info.architecture) parts.push("架构 " + info.architecture);
       if (info.max_context) parts.push("上下文上限 " + info.max_context);
       if (info.name) parts.push(info.name);
@@ -355,6 +413,8 @@
     }
   }
 
+  // 把当前配置收敛到该 artifact 真正支持的能力：不支持就自动纠正并说明原因，
+  // 而不是留一个"能选但启动必失败"的状态（引擎会 FATAL: missing component）。
   function applyArtifactCapabilities(info) {
     const spec = document.getElementById("f-spec");
     if (spec) {
@@ -365,15 +425,42 @@
         option.disabled = !supported;
         option.title = supported ? "" : "该 artifact 不含此组件";
       }
-    }
-    for (const [key, supported] of [["vision", info.components.includes("vision")], ["lm_head_draft", info.proposal]]) {
-      const node = document.getElementById("f-" + key);
-      if (!node || !info || !info.ok) {
-        if (node) { node.disabled = false; node.title = ""; }
-        continue;
+      if (allowed) {
+        const current = String(state.values.spec || "");
+        if (current && !allowed.has(current)) {
+          const fallback = allowed.has("mtp") ? "mtp" : (allowed.values().next().value || "");
+          state.values.spec = fallback || null;
+          spec.value = fallback || "";
+          if (!fallback) {
+            state.values.draft_tokens = null;
+            const draft = document.getElementById("f-draft-tokens");
+            if (draft) draft.value = "";
+          }
+          toast(
+            fallback
+              ? `该模型不支持 --spec ${current}，已切换为 --spec ${fallback}`
+              : `该模型没有投机解码组件，已关闭 --spec ${current}`,
+            "err"
+          );
+          schedulePreview();
+        }
       }
+    }
+    for (const [key, supported, label] of [
+      ["vision", info && info.ok ? info.components.includes("vision") : true, "vision"],
+      ["lm_head_draft", info && info.ok ? info.proposal : true, "proposal"],
+    ]) {
+      const node = document.getElementById("f-" + key);
+      if (!node) continue;
+      const known = Boolean(info && info.ok);
       node.disabled = !supported;
-      node.title = supported ? "" : "该 artifact 不含 " + (key === "vision" ? "vision" : "proposal") + " 组件";
+      node.title = supported || !known ? "" : "该 artifact 不含 " + label + " 组件";
+      if (known && !supported && node.checked) {
+        node.checked = false;
+        state.values[key] = false;
+        toast(`该 artifact 不含 ${label} 组件，已关闭对应选项`, "err");
+        schedulePreview();
+      }
     }
   }
 
@@ -861,12 +948,251 @@
       ? `${timings.draft_n_accepted || 0}/${timings.draft_n}` : "—";
   }
 
+  /* -------------------------------------------------------------- 下载 */
+
+  const dl = { info: null, loaded: false };
+
+  async function refreshDownloads(force) {
+    const onTab = $("#tab-download").classList.contains("active");
+    const busy = dl.info
+      && dl.info.jobs.some((job) => job.state === "running" || job.state === "queued");
+    if (!force && !onTab && !busy) return;
+    try {
+      const data = await api("/api/downloads");
+      dl.info = data;
+      renderDownloads();
+    } catch (error) {
+      // launcher 重启期间属正常；渲染错误留在控制台便于排查。
+      if (error instanceof Error) console.error("下载页刷新失败", error);
+    }
+  }
+
+  function renderDownloads() {
+    const info = dl.info;
+    if (!info) return;
+
+    const preset = $("#dl-preset");
+    if (!dl.loaded || preset.options.length !== info.catalog.length + 1) {
+      const previous = preset.value;
+      preset.innerHTML = "";
+      for (const item of info.catalog) {
+        const option = document.createElement("option");
+        option.value = item.repo + "|" + item.filename;
+        option.textContent = `${item.label}（${item.size_gib} GiB）`;
+        preset.appendChild(option);
+      }
+      const custom = document.createElement("option");
+      custom.value = "custom";
+      custom.textContent = "自定义仓库 / 文件…";
+      preset.appendChild(custom);
+      if (previous) preset.value = previous;
+    }
+
+    const root = $("#dl-root");
+    const roots = info.roots || [];
+    if (!dl.loaded) {
+      root.innerHTML = "";
+      for (const path of roots) {
+        const option = document.createElement("option");
+        option.value = path;
+        option.textContent = path;
+        root.appendChild(option);
+      }
+      if (!roots.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "（先在上方配置模型目录）";
+        root.appendChild(option);
+      }
+    }
+
+    const endpoint = $("#dl-endpoint");
+    if (!endpoint.options.length) {
+      for (const mirror of info.mirrors) {
+        const option = document.createElement("option");
+        option.value = mirror.value;
+        option.textContent = mirror.label;
+        endpoint.appendChild(option);
+      }
+      const custom = document.createElement("option");
+      custom.value = "custom";
+      custom.textContent = "自定义镜像…";
+      endpoint.appendChild(custom);
+      endpoint.value = info.endpoint || info.mirrors[0].value;
+      if (![...endpoint.options].some((option) => option.value === endpoint.value)) {
+        endpoint.value = "custom";
+        $("#dl-endpoint-custom").value = info.endpoint;
+      }
+    }
+    $("#dl-endpoint-custom").hidden = endpoint.value !== "custom";
+    $("#dl-custom").hidden = preset.value !== "custom";
+    $("#dl-note").textContent = selectedCatalogNote();
+
+    // 代理：只在首次渲染时回填，避免轮询覆盖正在输入的内容。
+    const proxyInput = $("#dl-proxy");
+    const proxyToggle = $("#dl-proxy-enable");
+    if (!dl.loaded) {
+      proxyInput.value = info.proxy || "";
+      proxyToggle.checked = Boolean(info.proxy);
+      proxyInput.disabled = !proxyToggle.checked;
+    }
+    dl.loaded = true;
+
+    // 任务列表
+    const host = $("#dl-jobs");
+    if (!info.jobs.length) {
+      host.innerHTML = '<div class="muted">暂无任务</div>';
+      return;
+    }
+    host.innerHTML = info.jobs.map(renderDownloadJob).join("");
+    for (const bar of $$("#dl-jobs .bar-fill")) {
+      bar.style.width = bar.dataset.percent + "%";
+    }
+  }
+
+  function renderDownloadJob(job) {
+    const stateLabel = {
+      queued: ["排队中", "pill-idle"],
+      running: ["下载中", "pill-starting"],
+      paused: ["已暂停", "pill-paused"],
+      done: ["已完成", "pill-ready"],
+      failed: ["失败", "pill-crashed"],
+      cancelled: ["已取消", "pill-idle"],
+    }[job.state] || [job.state, "pill-idle"];
+
+    const percent = job.percent === null || job.percent === undefined ? null : job.percent;
+    const size = job.total
+      ? `${fmtGiB(job.done)} / ${fmtGiB(job.total)}`
+      : `${fmtGiB(job.done)}`;
+    const speed = job.state === "running" && job.speed_bps > 0
+      ? `${fmtGiB(job.speed_bps)}/s · 剩余 ${fmtDuration(job.eta_s)}`
+      : "";
+
+    const actions = [];
+    if (job.state === "running" || job.state === "queued") {
+      actions.push(`<button class="btn btn-mini" data-act="pause" data-id="${job.id}">暂停</button>`);
+      actions.push(`<button class="btn btn-mini" data-act="cancel" data-id="${job.id}">取消</button>`);
+    } else if (job.state === "paused") {
+      actions.push(`<button class="btn btn-mini btn-primary" data-act="resume" data-id="${job.id}">继续</button>`);
+      actions.push(`<button class="btn btn-mini" data-act="cancel" data-id="${job.id}">取消</button>`);
+    } else if (job.state === "done") {
+      actions.push(`<button class="btn btn-mini btn-primary" data-act="use" data-id="${job.id}">设为当前模型</button>`);
+      actions.push(`<button class="btn btn-mini" data-act="clear" data-id="${job.id}">清除</button>`);
+    } else {
+      actions.push(`<button class="btn btn-mini" data-act="resume" data-id="${job.id}">继续续传</button>`);
+      actions.push(`<button class="btn btn-mini" data-act="clear" data-id="${job.id}">清除</button>`);
+    }
+
+    return `<div class="dl-job">
+      <div class="dl-job-head">
+        <span class="mono">${esc(job.repo)}/${esc(job.filename)}</span>
+        <span class="pill ${stateLabel[1]}">${stateLabel[0]}</span>
+        <span class="grow"></span>
+        ${actions.join("")}
+      </div>
+      <div class="bar"><div class="bar-fill" data-percent="${percent === null ? 0 : percent.toFixed(1)}"></div></div>
+      <div class="sub mono">${size}${speed ? " · " + speed : ""}${percent !== null ? " · " + percent.toFixed(1) + "%" : ""}${job.state === "paused" ? " · 已暂停，点「继续」从断点续传" : ""}</div>
+      <div class="sub mono">${esc(job.dest)}</div>
+      ${job.proxy ? `<div class="sub mono">代理 ${esc(job.proxy)}</div>` : ""}
+      ${job.error ? `<div class="sub" style="color:var(--red)">${esc(job.error)}</div>` : ""}
+    </div>`;
+  }
+
+  function selectedCatalogNote() {
+    const preset = $("#dl-preset");
+    const item = (dl.info.catalog || []).find(
+      (entry) => entry.repo + "|" + entry.filename === preset.value
+    );
+    if (!item) return "填写 Hugging Face 仓库 owner/name 与仓库内的文件名";
+    return item.preset
+      ? `${item.note} · 对应预设：${item.preset}`
+      : item.note;
+  }
+
+  function currentEndpoint() {
+    const select = $("#dl-endpoint");
+    return select.value === "custom" ? $("#dl-endpoint-custom").value.trim() : select.value;
+  }
+
+  async function startDownload() {
+    const preset = $("#dl-preset").value;
+    let repo, filename;
+    if (preset === "custom") {
+      repo = $("#dl-repo").value.trim();
+      filename = $("#dl-file").value.trim();
+    } else {
+      const item = (dl.info.catalog || []).find((entry) => entry.repo + "|" + entry.filename === preset);
+      if (!item) return;
+      repo = item.repo;
+      filename = item.filename;
+    }
+    try {
+      await api("/api/downloads", {
+        method: "POST",
+        body: JSON.stringify({
+          repo,
+          filename,
+          dest_root: $("#dl-root").value || null,
+          endpoint: currentEndpoint() || null,
+          proxy: $("#dl-proxy-enable").checked ? ($("#dl-proxy").value.trim() || "") : "",
+        }),
+      });
+      toast(`开始下载 ${filename}`, "ok");
+      await refreshDownloads(true);
+    } catch (error) {
+      toast(error.message, "err");
+    }
+  }
+
+  async function onDownloadAction(event) {
+    const button = event.target.closest("button[data-act]");
+    if (!button) return;
+    const { act, id } = button.dataset;
+    try {
+      if (act === "pause") {
+        await api(`/api/downloads/${id}/pause`, { method: "POST" });
+        toast("已暂停，可随时继续（断点保留）");
+      } else if (act === "resume") {
+        await api(`/api/downloads/${id}/resume`, { method: "POST" });
+        toast("继续下载，从断点续传", "ok");
+      } else if (act === "cancel") {
+        await api(`/api/downloads/${id}/cancel`, { method: "POST" });
+      } else if (act === "clear") {
+        await api(`/api/downloads/${id}/clear`, { method: "POST" });
+      } else if (act === "use") {
+        const job = (dl.info.jobs || []).find((entry) => entry.id === id);
+        if (job) {
+          state.values.artifact = job.dest;
+          const node = document.getElementById("f-artifact");
+          if (node) node.value = job.dest;
+          scheduleArtifactInfo();
+          schedulePreview();
+          switchTab("config");
+          toast(`已把 ${job.filename} 设为当前模型`);
+        }
+        return;
+      }
+      await refreshDownloads(true);
+    } catch (error) {
+      toast(error.message, "err");
+    }
+  }
+
+  function fmtGiB(bytes) {
+    const value = Number(bytes) || 0;
+    if (value >= 1024 ** 3) return (value / 1024 ** 3).toFixed(2) + " GiB";
+    if (value >= 1024 ** 2) return (value / 1024 ** 2).toFixed(1) + " MiB";
+    if (value >= 1024) return (value / 1024).toFixed(0) + " KiB";
+    return value + " B";
+  }
+
   /* -------------------------------------------------------------- 绑定 */
 
   function switchTab(name) {
     for (const button of $$(".tab-btn")) button.classList.toggle("active", button.dataset.tab === name);
     for (const tab of $$(".tab")) tab.classList.toggle("active", tab.id === "tab-" + name);
     if (name === "config") renderPreview();
+    if (name === "download") refreshDownloads(true);
     if (name === "logs" && state.autoScroll) {
       const view = $("#log-view");
       view.scrollTop = view.scrollHeight;
@@ -904,6 +1230,24 @@
     $("#btn-profile-delete").addEventListener("click", deleteProfile);
     $("#btn-profile-bat").addEventListener("click", exportBat);
     $("#btn-profile-presets").addEventListener("click", restorePresets);
+
+    $("#btn-dl-start").addEventListener("click", startDownload);
+    $("#dl-jobs").addEventListener("click", onDownloadAction);
+    $("#btn-custom-add").addEventListener("click", addCustomArg);
+    $("#custom-args").addEventListener("input", onCustomArgEvent);
+    $("#custom-args").addEventListener("click", onCustomArgEvent);
+    $("#dl-preset").addEventListener("change", () => {
+      $("#dl-custom").hidden = $("#dl-preset").value !== "custom";
+      $("#dl-note").textContent = selectedCatalogNote();
+    });
+    $("#dl-endpoint").addEventListener("change", () => {
+      $("#dl-endpoint-custom").hidden = $("#dl-endpoint").value !== "custom";
+    });
+    $("#dl-proxy-enable").addEventListener("change", () => {
+      const enabled = $("#dl-proxy-enable").checked;
+      $("#dl-proxy").disabled = !enabled;
+      if (enabled) $("#dl-proxy").focus();
+    });
 
     $("#log-filter").addEventListener("input", (event) => {
       state.filter = event.target.value.trim().toLowerCase();
