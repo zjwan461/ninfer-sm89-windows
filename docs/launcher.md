@@ -12,7 +12,7 @@ start-launcher.bat --port 8101      :: 换 UI 端口
 start-launcher.bat --no-browser     :: 不自动开浏览器
 ```
 
-打开界面后：选一个档案（首次运行会自动导入四个内置预设）→ 确认模型文件 → 点「启动」。
+打开界面后：选一个档案（首次运行会自动导入五个内置预设）→ 确认模型文件 → 点「启动」。
 
 ## Python 从哪来
 
@@ -134,8 +134,8 @@ Swift 1.5、Qwen3.6-35B-A3B；也可以选「自定义」填任意 `owner/name` 
 
 - 档案 = 一整套参数（含引擎路径与模型文件），保存在
   `%LOCALAPPDATA%\NInfer-Launcher\profiles.json`；
-- 首次运行自动导入四个内置预设，对应仓库的四个 `start-*.bat`：
-  `Qwen3.8-27B int8 · 4080s/4090`、`Bonsai2-27B VL · 4080s/4090`；
+- 首次运行自动导入五个内置预设，对应仓库的 `start-*.bat`：
+  `Qwen3.8-27B int8 · 4080s/4090`、`Bonsai2-27B VL · 4080s/4090`、`Bonsai2-27B VL · 5060Ti`；
 - 支持另存为、删除、恢复内置预设；「导出 .bat」会生成与 `start-*.bat` 同形的脚本，
   可继续用 `NINFER_SERVER` / `%*` 覆盖。
 

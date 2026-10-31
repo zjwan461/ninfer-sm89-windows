@@ -1,6 +1,6 @@
-# NInfer Windows 源码编译手册（`sm_89`：RTX 4090 / 4080 SUPER）
+# NInfer Windows 源码编译手册（`sm_89` / `sm_120a`：RTX 4090 / 4080 SUPER / 5060 Ti）
 
-> 目标：在 **Windows 11 x64 + `sm_89` 显卡**上，从源码编译 NInfer（本 fork，`sm_89` 原生 Windows 移植），并按需要选择 128 SM（RTX 4090）或 80 SM（RTX 4080 SUPER，本手册作者的卡为 **32 GB** 显存版）的 attention 几何档位。
+> 目标：在 **Windows 11 x64 + `sm_89` 或 `sm_120a` 显卡**上，从源码编译 NInfer（本 fork），并按需要选择 128 SM（RTX 4090）、80 SM（RTX 4080 SUPER，本手册作者的卡为 **32 GB** 显存版）或 36 SM（RTX 5060 Ti 16 GB）的 attention 几何档位。
 > 前置：只需要 **Visual Studio 2022 + CUDA Toolkit**；唯一的额外软件 **vcpkg** 由 §3 第 0 步安装。
 > 约定：本手册用占位符与环境变量，不与任何机器绑定——
 > `<repo>` 源码目录、`<vcpkg-root>` vcpkg 安装目录、`<cuda-path>` CUDA 安装目录、`<model-dir>` 模型目录、`<vcvars64.bat>` VS 的编译环境脚本。
@@ -38,16 +38,17 @@ cmake --build build-4080s -j
 
 ---
 
-## 1. 两个构建档位（先搞清要建哪个）
+## 1. 三个构建档位（先搞清要建哪个）
 
-| 档位 | `NINFER_TARGET_SM_COUNT` | 建议输出目录 | 用途 |
-|---|---:|---|---|
-| `release`（默认） | 128 | `build-4090`（或 `build`） | RTX 4090 基线；无测试/基准 |
-| `dev` | 128 | `build` | RTX 4090 基线 + 测试 + 基准 |
-| `release-4080s` | 80 | `build-4080s` | RTX 4080 SUPER 优化档（作者的 4080 SUPER 为 32 GB 显存版） |
+| 档位 | 架构 | `NINFER_TARGET_SM_COUNT` | 建议输出目录 | 用途 |
+|---|---|---|---:|---|
+| `release`（默认） | `sm_89` | 128 | `build-4090`（或 `build`） | RTX 4090 基线；无测试/基准 |
+| `dev` | `sm_89` | 128 | `build` | RTX 4090 基线 + 测试 + 基准 |
+| `release-4080s` | `sm_89` | 80 | `build-4080s` | RTX 4080 SUPER 优化档（作者的 4080 SUPER 为 32 GB 显存版） |
+| `release-5060ti` | `sm_120a` | 36 | `build-5060ti` | RTX 5060 Ti 16 GB（Blackwell，CC 12.0） |
 
-> `NINFER_TARGET_SM_COUNT` 是本 fork 新增的编译开关：它只决定 attention wave 几何按多少 SM 编译（**不是架构开关**，架构恒为 `sm_89`）。合法值必须是**偶数且 ≥ 66**，否则 configure 期与编译期都会报错。128 与 80 两档在任意 `sm_89` 卡上都能跑，只是档位与卡不匹配时会损失一点波次利用率，不影响正确性。
-> 编译产物**互不影响**：两档用不同输出目录，可同时保留做 A/B。
+> 架构由 `CMAKE_CUDA_ARCHITECTURES` 选择（`89` 或 `120a`），`NINFER_TARGET_SM_COUNT` 只决定 attention wave 几何按多少 SM 编译。合法值必须是**偶数且在 [32, 128]**，否则 configure 期报错。128 / 80 / 36 三档分别对应 RTX 4090 / 4080 SUPER / 5060 Ti；SM 档位与卡不匹配只损失波次利用率，不影响正确性，而架构与卡不匹配会在启动时被拒绝。
+> 编译产物**互不影响**：各档用不同输出目录，可同时保留做 A/B。
 > 需要逐算子基准（`ninfer_linear_bench` 等）时另行加 `-DNINFER_BUILD_BENCHMARKS=ON`；该开关默认关闭，所以默认构建里没有 `bench/*.exe`。4080S（80 SM）上的实测基线、逐算子带宽与两个已定位的问题见 `NINFER_4080S_BASELINE.md`。
 
 **重要**：仓库自带的 `CMakePresets.json` **只含构建选项，不含工具链路径**（vcpkg / CUDA / 编译器），因此有两种用法：
@@ -62,14 +63,14 @@ cmake --build build-4080s -j
 
 | 项 | 要求 | 检查方法 |
 |---|---|---|
-| CUDA Toolkit | **≥ 12.8** | `nvcc --version` |
+| CUDA Toolkit | **≥ 12.8**；`sm_120a` 档需要支持该架构的 CUDA（建议 13.x） | `nvcc --version` |
 | CMake | ≥ 3.28 | `cmake --version` |
 | Ninja | 需要 | `ninja --version` |
-| 编译器 | MSVC + C++20 | VS 2022（Community / Professional / Build Tools 任一） |
-| GPU 架构 | `sm_89`（`CMakeLists.txt` 只接受 89） | `nvidia-smi --query-gpu=name --format=csv` |
+| 编译器 | MSVC + C++20 | VS 2022 或 VS 2026（Community / Professional / Build Tools 任一） |
+| GPU 架构 | `sm_89`（Ada）或 `sm_120a`（Blackwell），由 `CMAKE_CUDA_ARCHITECTURES` 选择 | `nvidia-smi --query-gpu=name,compute_cap --format=csv` |
 | 依赖 | vcpkg 提供 `curl` / `ffmpeg` / `pkgconf` | 由 manifest 自动安装 |
 | 磁盘 | 建议预留 40~60 GB | vcpkg 编 FFmpeg 时 `buildtrees/packages/downloads` 会吃 10~20 GB |
-| 显存 | 运行模型时的参考值：RTX 4090 = 24 GB；**作者的 RTX 4080 SUPER = 32 GB**（零售 AD103 卡为 16 GB） | `nvidia-smi --query-gpu=memory.total --format=csv` |
+| 显存 | 运行模型时的参考值：RTX 4090 = 24 GB；**作者的 RTX 4080 SUPER = 32 GB**（零售 AD103 卡为 16 GB）；RTX 5060 Ti = 16 GB | `nvidia-smi --query-gpu=memory.total --format=csv` |
 
 CMake 与 Ninja 随 VS 2022 一起安装，但**不在默认 PATH**，只在 VS 安装目录内。用「x64 Native Tools Command Prompt for VS 2022」即可自动带上它们与 Windows SDK，无需手工配 PATH。
 
@@ -154,10 +155,22 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DPython3_EXECUTABLE="<python.exe 全路径>"
 ```
 
+**A-4 · 36 SM 档（RTX 5060 Ti 16 GB，`sm_120a`）：**
+```bat
+cmake -S . -B build-5060ti -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake ^
+  -DVCPKG_TARGET_TRIPLET=x64-windows ^
+  -DCMAKE_CUDA_ARCHITECTURES=120a ^
+  -DNINFER_TARGET_SM_COUNT=36 ^
+  -DCUDAToolkit_ROOT="%CUDA_PATH%" ^
+  -DCMAKE_CUDA_COMPILER="%CUDA_PATH%/bin/nvcc.exe"
+```
+
 要点：
-- `CMAKE_CUDA_ARCHITECTURES` **必须 89**，否则 `FATAL_ERROR`。
-- 装了多个 CUDA 时，用 `-DCUDAToolkit_ROOT` + `-DCMAKE_CUDA_COMPILER` 钉死要用的版本。
-- `-DNINFER_TARGET_SM_COUNT`：**128 = RTX 4090**（不传即默认 128），**80 = RTX 4080 SUPER**。两张卡用同一份源码、同一 `sm_89` 架构，只是该常量不同 → 建议分别建到 `build-4090` / `build-4080s`。
+- `CMAKE_CUDA_ARCHITECTURES` 必须是 **`89`（Ada）或 `120a`（Blackwell）**，其它值在 configure 期 `FATAL_ERROR`。
+- 装了多个 CUDA 时，用 `-DCUDAToolkit_ROOT` + `-DCMAKE_CUDA_COMPILER` 钉死要用的版本；`sm_120a` 档需要 CUDA 13.x。
+- `-DNINFER_TARGET_SM_COUNT`：**128 = RTX 4090**（不传即默认 128），**80 = RTX 4080 SUPER**，**36 = RTX 5060 Ti 16 GB**。卡与档位要配套；不同档位建议分别建到 `build-4090` / `build-4080s` / `build-5060ti`。
+- **MSVC 默认关闭 NVFP4 W4A4 TMA**（`NINFER_BUILD_NVFP4_TMA=OFF`）：MSVC 不接受按值传递 128 字节对齐的 `CUtensorMap` 形参（C2719），对应两个 TMA 启动单元会被排除，A4 产物自动降级为 A16 运行；Bonsai（三元权重）不受影响。换用能接受该形参的工具链时可加 `-DNINFER_BUILD_NVFP4_TMA=ON`。
 - `-DPython3_EXECUTABLE`：仅测试需要，指向装了依赖的 Python 3。
 
 #### 用法 B：具名 preset + 本机覆盖
@@ -251,7 +264,7 @@ build-4080s\apps\ninfer-perplexity.exe            困惑度评测
 build-4080s\apps\start-bonsai-rtx4080s.bat       启动脚本（80 SM 档；构建后自动随 exe 落位）
 build-4080s\apps\start-qwen38-rtx4080s.bat       启动脚本（80 SM 档；构建后自动随 exe 落位）
 ```
-> 启动脚本**按编译期档位各一份**（`start-bonsai-rtx4090.bat` / `start-qwen38-rtx4090.bat` 对应 128 SM，`-rtx4080s` 对应 80 SM），由 `apps/CMakeLists.txt` 的 `ninfer-serve` **POST_BUILD** 步骤按 `NINFER_TARGET_SM_COUNT` 自动把**匹配那一对**拷到 exe 同目录（脚本内 `%~dp0ninfer-serve.exe` 由此解析）。两档脚本只差 `--prefill-chunk`（1408 / 1024）。它们属于本 fork 的本地文件，缺失时不报错；本 fork 的打包脚本 `scripts/package-release-v061-sm89.ps1` 也会按档带上对应两份（上游的 v040/v050/v060 脚本保持原样，不涉及这些 bat）。
+> 启动脚本**按编译期档位各一份**（`start-bonsai-rtx4090.bat` / `start-qwen38-rtx4090.bat` 对应 128 SM，`-rtx4080s` 对应 80 SM，`start-bonsai-rtx5060ti.bat` 对应 36 SM），由 `apps/CMakeLists.txt` 的 `ninfer-serve` **POST_BUILD** 步骤按 `NINFER_TARGET_SM_COUNT` 自动把匹配的那几份拷到 exe 同目录（脚本内 `%~dp0ninfer-serve.exe` 由此解析）。各档脚本只差 `--prefill-chunk`（1408 / 1024 / 768）和 5060 Ti 档的 16 GB 上下文默认值。它们属于本 fork 的本地文件，缺失时不报错；本 fork 的打包脚本 `scripts/package-release-v061-sm89.ps1` 也会按档带上对应几份（上游的 v040/v050/v060 脚本保持原样，不涉及这些 bat）。
 
 先看帮助与设备识别：
 ```bat
@@ -298,7 +311,7 @@ build-4080s\apps\ninfer-serve.exe <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer ^
 - 若遇到「CUDA Graph × batch≥2 投机解码」长时间运行崩溃，加 `--no-cuda-graph`（代价约 2.6% 吞吐）。
 - 也可以直接用启动脚本（`build-4080s\apps\` 里在编译后也会有，按档自动落位对应那一对），模型路径作为**参数**：
   `start-bonsai-rtx4080s.bat <model-dir>\bonsai2_27b_vl_mtp_q4q5.ninfer`（目录也行；省略参数则依次取 `NINFER_MODEL`、`NINFER_MODEL_DIR`、`models\` 下的默认名）；模型之后的参数原样透传给 `ninfer-serve`。
-- 以上是 80 SM 档（RTX 4080 SUPER）的保守参数。**这些参数是按作者的卡写的——该机为 32 GB 显存版 4080 SUPER**（零售 AD103 卡通常 16 GB）：`--max-context 131072` 与 `--max-concurrency 2` 都吃显存，**16 GB 的标准 4080 SUPER 请相应下调**（对照 `--prefill-chunk 1024` 与本段参数，先把 `--max-context` 降下来即可跑通）。128 SM 档（RTX 4090）用 `build-4090\apps\` 下的二进制与 `start-*-rtx4090.bat`，参数可同样按显存余量自行调高 `--max-concurrency` 等上限。两档脚本的具体差异写在各自文件头注释里（`--prefill-chunk` 随 SM 档；4080S 的 Qwen3.8 档还把 `--max-context` 提到了 131072，原因就是 32 GB 显存）。
+- 以上是 80 SM 档（RTX 4080 SUPER）的保守参数。**这些参数是按作者的卡写的——该机为 32 GB 显存版 4080 SUPER**（零售 AD103 卡通常 16 GB）：`--max-context 131072` 与 `--max-concurrency 2` 都吃显存，**16 GB 的标准 4080 SUPER 请相应下调**（对照 `--prefill-chunk 1024` 与本段参数，先把 `--max-context` 降下来即可跑通）。128 SM 档（RTX 4090）用 `build-4090\apps\` 下的二进制与 `start-*-rtx4090.bat`，参数可同样按显存余量自行调高 `--max-concurrency` 等上限。5060 Ti 档用 `build-5060ti\apps\` 下的二进制与 `start-bonsai-rtx5060ti.bat`（16 GB：`--max-context 131072 --max-concurrency 2 --prefill-chunk 768`；若启动时 CUDA Graph 预留 OOM，加 `--no-cuda-graph`）。各档脚本的具体差异写在各自文件头注释里（`--prefill-chunk` 随 SM 档；4080S 的 Qwen3.8 档还把 `--max-context` 提到了 131072，原因就是 32 GB 显存）。
 
 ---
 
@@ -345,7 +358,7 @@ findstr /C:"NINFER_TARGET_SM_COUNT=80" build-4080s\compile_commands.json
 | 抓到了旧版 CUDA | PATH/root 未钉死 | 显式 `-DCUDAToolkit_ROOT` + `-DCMAKE_CUDA_COMPILER` 指向目标版本 |
 | `requires CUDA 12.8 or newer` | nvcc 版本过低 | 同上，换成 ≥ 12.8 的 nvcc |
 | `NInfer supports only CMAKE_CUDA_ARCHITECTURES=89` | 架构值不对 | 传 `-DCMAKE_CUDA_ARCHITECTURES=89` |
-| `NINFER_TARGET_SM_COUNT must be an even integer >= 66` | SM 值非法 | 用 128 或 80（偶数且 ≥66） |
+| `NINFER_TARGET_SM_COUNT must be an even integer in [32, 128]` | SM 值非法 | 用 128 / 80 / 36（偶数且在该区间） |
 | 首次 configure 卡很久 | vcpkg 在编 FFmpeg | 正常，**1~2 小时**；别中断 |
 | 找不到 Windows SDK | 未进入 VS 编译环境 | 用「x64 Native Tools」提示符（会正确设置 `WindowsSdkDir`） |
 | 改过 CUDA 编译器后报错 | 旧 build 目录绑定了旧编译器 | 删掉 build 目录重新 configure |
@@ -423,9 +436,9 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
 
 ---
 
-## 10. 发布打包（可选，两档一起出）
+## 10. 发布打包（可选，sm_89 两档一起出）
 
-本 fork 是 `sm_89` 移植，`NINFER_TARGET_SM_COUNT` 是**编译期常量**，所以 4090（128 SM）与 4080S（80 SM）各需一份二进制。打包脚本一次把两档收进同一个压缩包的两个子目录。
+`NINFER_TARGET_SM_COUNT` 是**编译期常量**，所以 4090（128 SM）与 4080S（80 SM）各需一份二进制。打包脚本一次把两档收进同一个压缩包的两个子目录。RTX 5060 Ti 档是独立的 `sm_120a` 构建，不在这份 sm_89 打包脚本的覆盖范围内，需要单独打包/发布。
 
 前置：两档都已编译完成。128 档放 `build-4090`（脚本也接受默认目录 `build`），80 档放 `build-4080s`（即 §1 的 `-DNINFER_TARGET_SM_COUNT=80`）。然后：
 

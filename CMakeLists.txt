@@ -1,14 +1,19 @@
 cmake_minimum_required(VERSION 3.28)
 
-# The current implementation is compiled only for sm_89. Set and validate the
-# architecture before CUDA compiler detection so CMake never injects a generic
-# host-toolchain default or accepts an unsupported target.
+# One CUDA architecture per build tree. sm_89 covers Ada (RTX 4090 / 4080 SUPER); sm_120a
+# covers Blackwell consumer (RTX 5060 Ti 16 GB, compute capability 12.0). Validate the
+# architecture before CUDA compiler detection so CMake never injects a generic host-toolchain
+# default or accepts an unsupported target.
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures to build")
+  set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures to build (89 or 120a)")
 endif()
-if(NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "89")
+if(CMAKE_CUDA_ARCHITECTURES STREQUAL "89")
+  set(NINFER_TARGET_COMPUTE_CAPABILITY 89)
+elseif(CMAKE_CUDA_ARCHITECTURES STREQUAL "120a")
+  set(NINFER_TARGET_COMPUTE_CAPABILITY 120)
+else()
   message(FATAL_ERROR
-    "NInfer supports only CMAKE_CUDA_ARCHITECTURES=89; got "
+    "NInfer supports CMAKE_CUDA_ARCHITECTURES=89 (Ada) or 120a (Blackwell); got "
     "'${CMAKE_CUDA_ARCHITECTURES}'")
 endif()
 
@@ -54,19 +59,24 @@ endif()
 
 # The attention wave geometry (ops/softmax_attention/dense/causal_cache) is a compile-time
 # constant -- __device__ launch policies cannot query the device -- so the build has to be told
-# how many SMs the target card has. This is not an architecture switch (the architecture stays
-# sm_89); it selects the SM count of one sm_89 card. The default 128 matches the RTX 4090 the
-# project is tuned on; an RTX 4080 SUPER (80 SMs) build passes 80. The valid domain is even and
-# >= 66 (see causal_cache/geometry.cuh).
+# how many SMs the target card has. This is not the architecture switch above; it selects the SM
+# count of one card of that architecture. The default 128 matches the RTX 4090 the project is
+# tuned on; an RTX 4080 SUPER build passes 80 and an RTX 5060 Ti 16 GB build passes 36. The
+# geometry rounds its split cap up to whole waves, so any even count in [32, 128] is valid; the
+# upper bound comes from the small-T merge kernel, which indexes at most 256 splits and the
+# 16Q/2KV geometry needs 2 * SM of them.
 set(NINFER_TARGET_SM_COUNT 128 CACHE STRING
-  "SM count of the target sm_89 card for attention wave geometry (128 = RTX 4090, 80 = RTX 4080 SUPER)")
+  "SM count of the target card for attention wave geometry (128 = RTX 4090, 80 = RTX 4080 SUPER, 36 = RTX 5060 Ti)")
 math(EXPR NINFER_TARGET_SM_PARITY "${NINFER_TARGET_SM_COUNT} % 2")
-if(NINFER_TARGET_SM_COUNT LESS 66 OR NOT NINFER_TARGET_SM_PARITY EQUAL 0)
+if(NINFER_TARGET_SM_COUNT LESS 32 OR NINFER_TARGET_SM_COUNT GREATER 128
+   OR NOT NINFER_TARGET_SM_PARITY EQUAL 0)
   message(FATAL_ERROR
-    "NINFER_TARGET_SM_COUNT must be an even integer >= 66; got "
+    "NINFER_TARGET_SM_COUNT must be an even integer in [32, 128]; got "
     "'${NINFER_TARGET_SM_COUNT}'")
 endif()
-add_compile_definitions(NINFER_TARGET_SM_COUNT=${NINFER_TARGET_SM_COUNT})
+add_compile_definitions(
+  NINFER_TARGET_SM_COUNT=${NINFER_TARGET_SM_COUNT}
+  NINFER_TARGET_COMPUTE_CAPABILITY=${NINFER_TARGET_COMPUTE_CAPABILITY})
 
 # Tests also exercise product input, logging and protocol adapters.
 set(NINFER_BUILD_PRODUCT_SUPPORT OFF)

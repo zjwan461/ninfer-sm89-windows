@@ -9,7 +9,7 @@
 - ``validate``：语义校验，返回 (errors, warnings)；
 - ``build_argv``：把参数字典变成 ``ninfer-serve.exe`` 的完整 argv；
 - ``Store``：profile / 设置的持久化；
-- ``builtin_presets``：仓库四个 ``start-*.bat`` 的等价档案。
+- ``builtin_presets``：仓库 ``start-*.bat`` 的等价档案（三张卡五个组合）。
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "filename": "bonsai2_27b_vl_mtp_q4q5.ninfer",
         "size_gib": 6.4,
         "preset": "Bonsai2-27B VL · 4080s",
-        "note": "Q4/Q5 三元权重 + vision + MTP；只支持 --spec mtp（可直接用内置预设）",
+        "note": "Q4/Q5 三元权重 + vision + MTP；只支持 --spec mtp（24/32 GB 用 4080s/4090 预设，16 GB 的 5060 Ti 用 5060Ti 预设）",
     },
     {
         "label": "Qwen3.8-27B int8 prefill（推荐）",
@@ -139,7 +139,7 @@ FIELDS: tuple[Field, ...] = (
     # ---------------------------------------------------------------- 模型
     Field(
         "engine_binary", "model", "引擎（ninfer-serve.exe）", kind="path", default="",
-        help="启动的子进程；本机默认 build-4080s\\apps\\ninfer-serve.exe",
+        help="启动的子进程；留空时按 build → build-5060ti → build-4080s → build-4090 顺序探测本机产物",
     ),
     Field(
         "artifact", "model", "模型文件（.ninfer）", kind="path", default="",
@@ -193,7 +193,7 @@ FIELDS: tuple[Field, ...] = (
     Field(
         "prefill_chunk", "perf", "prefill 分块（--prefill-chunk）", kind="int",
         cli="--prefill-chunk", minimum=1,
-        placeholder="4080s 实测 1024；4090 用 1408",
+        placeholder="4080s 实测 1024；4090 用 1408；5060Ti 起步 768",
     ),
     Field(
         "spec", "perf", "投机解码后端（--spec）", kind="enum", cli="--spec", choices=SPECS,
@@ -472,6 +472,7 @@ def default_engine_binary() -> str:
 
     candidates: list[Path] = [
         REPO_ROOT / "build" / "apps" / "ninfer-serve.exe",
+        REPO_ROOT / "build-5060ti" / "apps" / "ninfer-serve.exe",
         REPO_ROOT / "build-4080s" / "apps" / "ninfer-serve.exe",
         REPO_ROOT / "build-4090" / "apps" / "ninfer-serve.exe",
     ]
@@ -1013,15 +1014,18 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
 
 
 def builtin_presets() -> list[dict[str, Any]]:
-    """仓库四个 ``start-*.bat`` 的等价档案（值逐字段对照脚本）。"""
+    """仓库 ``start-*.bat`` 的等价档案（值逐字段对照脚本；三张卡四个模型组合）。"""
 
     roots = default_models_roots()
     engine_4080s = str(REPO_ROOT / "build-4080s" / "apps" / "ninfer-serve.exe")
     engine_4090 = str(REPO_ROOT / "build-4090" / "apps" / "ninfer-serve.exe")
+    engine_5060ti = str(REPO_ROOT / "build-5060ti" / "apps" / "ninfer-serve.exe")
     if not Path(engine_4080s).is_file():
         engine_4080s = default_engine_binary()
     if not Path(engine_4090).is_file():
         engine_4090 = engine_4080s
+    if not Path(engine_5060ti).is_file():
+        engine_5060ti = default_engine_binary()
 
     qwen = resolve_artifact("qwen3_8_27b_a8.ninfer", roots)
     bonsai = resolve_artifact("bonsai2_27b_vl_mtp_q4q5.ninfer", roots)
@@ -1097,6 +1101,18 @@ def builtin_presets() -> list[dict[str, Any]]:
             max_context=262144,
             max_concurrency=3,
             prefill_chunk=1408,
+            spec="mtp",
+            draft_tokens=2,
+            lm_head_draft=True,
+            ngram="chain",
+            vision=True,
+        ),
+        profile(
+            "Bonsai2-27B VL · 5060Ti", engine_5060ti, bonsai,
+            model_id="bonsai-27b",
+            max_context=131072,
+            max_concurrency=2,
+            prefill_chunk=768,
             spec="mtp",
             draft_tokens=2,
             lm_head_draft=True,

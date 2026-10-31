@@ -30,6 +30,13 @@
 #include <utility>
 #include <vector>
 
+// The build selects one CUDA architecture (see CMakeLists.txt) and this family only runs on that
+// architecture. Default to the Ada target when the definition is absent, e.g. in ad-hoc
+// translation-unit builds.
+#ifndef NINFER_TARGET_COMPUTE_CAPABILITY
+#define NINFER_TARGET_COMPUTE_CAPABILITY 89
+#endif
+
 namespace ninfer::models::qwen3_5::detail {
 namespace {
 
@@ -851,16 +858,22 @@ void validate_target_options(const execution::Parameters& parameters, DeviceCont
             throw std::invalid_argument("n-gram pool size must be in [4 B,4 GiB]");
         }
     }
-    if (device.compute_capability() != 89) {
-        throw std::invalid_argument("Qwen3.5 family runtime requires compute capability 8.9");
+    if (device.compute_capability() != NINFER_TARGET_COMPUTE_CAPABILITY) {
+        throw std::invalid_argument(
+            "Qwen3.5 family runtime requires compute capability " +
+            std::to_string(NINFER_TARGET_COMPUTE_CAPABILITY / 10) + "." +
+            std::to_string(NINFER_TARGET_COMPUTE_CAPABILITY % 10) +
+            " (this build was compiled for that architecture)");
     }
-    // Upstream's NVFP4-valued KV modes need FP4 tensor cores; the sm_89 build carries their
+#if NINFER_TARGET_COMPUTE_CAPABILITY < 120
+    // Upstream's NVFP4-valued KV modes need FP4 tensor cores; the Ada build carries their
     // kernels only as stubs (ops/nvfp4_sm86_stubs.cpp), so refuse them before any allocation.
     if (options.kv_cache == KvCacheStorage::Nvfp4Group16 ||
         options.kv_cache == KvCacheStorage::Fp8KeyNvfp4Value) {
         throw std::invalid_argument(
             "nvfp4 and k8v4 KV-cache storage require compute capability 12.0");
     }
+#endif
 }
 
 std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlanningInputs& inputs,

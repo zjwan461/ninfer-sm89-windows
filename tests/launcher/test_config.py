@@ -134,6 +134,31 @@ def test_bonsai_preset_enables_vision() -> None:
     assert values["draft_tokens"] == 2
 
 
+def test_preset_matches_bonsai_5060ti_script() -> None:
+    presets = {preset["name"]: preset["values"] for preset in config.builtin_presets()}
+    values = presets["Bonsai2-27B VL · 5060Ti"]
+    # 与 start-bonsai-rtx5060ti.bat 的固定参数逐项对照：16 GB 卡用 131072 x 2 lanes。
+    expected = {
+        "model_id": "bonsai-27b",
+        "max_context": 131072,
+        "kv_capacity": "auto",
+        "kv_dtype": "rk4v4-e8",
+        "max_concurrency": 2,
+        "prefill_chunk": 768,
+        "default_max_tokens": 32768,
+        "spec": "mtp",
+        "draft_tokens": 2,
+        "lm_head_draft": True,
+        "ngram": "chain",
+        "vision": True,
+        "host": "127.0.0.1",
+        "port": 8080,
+    }
+    for key, want in expected.items():
+        assert values[key] == want, key
+    assert values["artifact"].endswith("bonsai2_27b_vl_mtp_q4q5.ninfer")
+
+
 # ------------------------------------------------------------------ 校验
 
 

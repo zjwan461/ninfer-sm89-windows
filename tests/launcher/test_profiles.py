@@ -37,7 +37,7 @@ def test_store_roundtrip(tmp_path: Path) -> None:
 def test_import_presets_is_idempotent(tmp_path: Path) -> None:
     store = _store(tmp_path)
     added = store.import_presets()
-    assert len(added) == 4
+    assert len(added) == 5
     names = {profile["name"] for profile in store.list_profiles()}
     assert "Qwen3.8-27B int8 · 4080s" in names
     assert all(profile["builtin"] for profile in store.list_profiles())
@@ -45,7 +45,7 @@ def test_import_presets_is_idempotent(tmp_path: Path) -> None:
     assert store.last_profile == "Qwen3.8-27B int8 · 4080s"
 
     assert store.import_presets() == []
-    assert len(store.list_profiles()) == 4
+    assert len(store.list_profiles()) == 5
 
 
 def test_import_presets_keeps_active_profile(tmp_path: Path) -> None:

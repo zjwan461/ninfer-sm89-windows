@@ -1,7 +1,7 @@
 # Build system
 
 NInfer builds from its source tree with CMake 3.28+ and C++/CUDA 20.
-The supported architecture is `sm_120a`; CUDA 13.1 is the validated development toolkit.
+Each build tree targets one architecture: `sm_89` (Ada) or `sm_120a` (Blackwell consumer).
 Product commands and prerequisites are in the
 [README](../../README.md#quick-start); test and measurement workflows live in
 [tests](../../tests/README.md) and [benchmarks](../../bench/README.md).
@@ -18,7 +18,8 @@ The default configuration is Release. Ninja links and archives share the single-
 | `NINFER_BUILD_APPS` | ON | CLI, HTTP server and perplexity evaluator |
 | `BUILD_TESTING` | OFF | C++ tests and registered Python interoperability tests |
 | `NINFER_BUILD_BENCHMARKS` | OFF | Op, model, Engine and context-cost benchmarks |
-| `NINFER_TARGET_SM_COUNT` | 128 | Compile-time SM count for the attention wave geometry (even, >= 66; 128 = RTX 4090, 80 = RTX 4080 SUPER) |
+| `NINFER_TARGET_SM_COUNT` | 128 | Compile-time SM count for the attention wave geometry (even, in [32,128]; 128 = RTX 4090, 80 = RTX 4080 SUPER, 36 = RTX 5060 Ti 16 GB) |
+| `NINFER_BUILD_NVFP4_TMA` | ON, OFF with MSVC | Compile the NVFP4 W4A4 TMA launchers; MSVC rejects their 128-byte-aligned `CUtensorMap` parameters (C2719), so A4 artifacts fall back to A16 |
 
 Apps or tests enable the internal product support components: media acquisition, prompt input,
 logging and serving. This is one derived condition, not a separate user option. FFmpeg belongs

@@ -4,11 +4,13 @@
 > maintained at [zjwan461/ninfer-sm89-windows](https://github.com/zjwan461/ninfer-sm89-windows).
 > Measured on a 32 GB RTX 4080 SUPER as well: **[NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md)** -- decode 74.9 tok/s (MTP k=3), prefill 3.37k tok/s, 262144 context at 29.5 GB, and the finding that the 80-SM constant makes no measurable difference on that card.
 
-> The change relative to upstream: the target SM count is a build option, so one `sm_89` source
-> builds for the RTX 4090 (128 SMs) or the RTX 4080 SUPER (80 SMs).
+> The change relative to upstream: the target architecture and SM count are build options, so one
+> source builds for the RTX 4090 (`sm_89`, 128 SMs), the RTX 4080 SUPER (`sm_89`, 80 SMs) or the
+> RTX 5060 Ti 16 GB (`sm_120a`, 36 SMs).
 
-A C++20/CUDA inference engine specialized for **one NVIDIA `sm_89` card** -- RTX 4090 (128 SMs) or
-RTX 4080 SUPER (80 SMs), selected at build time with `NINFER_TARGET_SM_COUNT` -- built
+A C++20/CUDA inference engine specialized for **one NVIDIA card** -- RTX 4090 (`sm_89`, 128 SMs),
+RTX 4080 SUPER (`sm_89`, 80 SMs) or RTX 5060 Ti 16 GB (`sm_120a`, 36 SMs), selected at build time
+with `CMAKE_CUDA_ARCHITECTURES` and `NINFER_TARGET_SM_COUNT` -- built
 and run natively on **Windows 11** (MSVC + CUDA; no WSL, no Docker). It serves two 27B models of
 the same architecture through a CLI and an OpenAI- and Anthropic-compatible HTTP server:
 
@@ -22,7 +24,10 @@ the same architecture through a CLI and an OpenAI- and Anthropic-compatible HTTP
 The figures above are the RTX 4090 (128 SM) reference. The RTX 4080 SUPER (80 SM) profile is
 measured separately: see [Performance -> RTX 4080 SUPER](#rtx-4080-super-80-sms-32-gb) for the
 numbers and [NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md) for the per-op bandwidth data,
-the context/concurrency matrix and the two bugs found while measuring.
+the context/concurrency matrix and the two bugs found while measuring. The 16 GB RTX 5060 Ti
+(`sm_120a`, 36 SM) profile is measured in
+[NINFER_5060TI_BASELINE.md](NINFER_5060TI_BASELINE.md): 59.2 tok/s decode without speculation and
+111.5 tok/s with MTP k=2 at 8192 context, 131072 x 2 lanes at 8.88 GiB planned.
 
 The two Qwen3.8-27B files hold the same weights, byte for byte; the int8-prefill file lets prompt
 processing run on int8 tensor cores (1.7-1.9x faster, same decode, same quality within noise).
@@ -61,7 +66,7 @@ not part of that budget.
 
 | | |
 |---|---|
-| GPU | NVIDIA GeForce RTX 4090 (128 SMs, 24 GB) or RTX 4080 SUPER (80 SMs, 32 GB), `sm_89`. The build targets one `sm_89` card; set `NINFER_TARGET_SM_COUNT` to its SM count. |
+| GPU | NVIDIA GeForce RTX 4090 (`sm_89`, 128 SMs, 24 GB), RTX 4080 SUPER (`sm_89`, 80 SMs, 16/32 GB) or RTX 5060 Ti 16 GB (`sm_120a`, 36 SMs). The build targets one card: set `CMAKE_CUDA_ARCHITECTURES` to `89` or `120a` and `NINFER_TARGET_SM_COUNT` to its SM count. |
 | OS | Windows 11 x64 |
 | Toolchain | Visual Studio Build Tools with MSVC (2026 validated), CUDA 12.8 or newer (13.4 validated), CMake 3.28+, Ninja |
 | Libraries | [vcpkg](https://github.com/microsoft/vcpkg) (`curl`, `ffmpeg`, `pkgconf`, installed from the manifest) |
@@ -571,7 +576,10 @@ The full protocol reference, including every field and error code, is in
 - Long-context decode slows with depth: a Bonsai MTP round costs 18.5-20.8 ms at 128K against
   12.8 ms at short context, all of it in attention.
 - DFlash2 is not supported with Bonsai's ternary output head; use MTP.
-- NVFP4/W4A4 execution needs Blackwell tensor cores and is unavailable on `sm_89`.
+- NVFP4/W4A4 execution needs Blackwell tensor cores and is unavailable on `sm_89`. In MSVC
+  builds it is also disabled on `sm_120a`: MSVC cannot pass the 128-byte-aligned `CUtensorMap`
+  kernel parameter (C2719), so the W4A4 TMA launchers are excluded
+  (`NINFER_BUILD_NVFP4_TMA=OFF`) and A4 artifacts fall back to A16 activations.
 - This branch is developed and validated on Windows. The Linux build and `Dockerfile` are
   inherited from the upstream 4090 port and are not re-validated here; see
   [docs/rtx-3090-linux.md](docs/rtx-3090-linux.md) with `CMAKE_CUDA_ARCHITECTURES=89`.

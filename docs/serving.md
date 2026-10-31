@@ -841,7 +841,7 @@ The table lists executable defaults. The startup example selects a long-context 
 | `--auto-save-evicted` | spill an involuntarily evicted session back to its bound slot file; requires `--slot-save-path` | off |
 | `--response-store-max-records N` | maximum locally retained Responses objects | `1024` |
 | `--response-store-max-mib N` | total local Response envelope/Item/context budget | `256` |
-| `--kv-dtype bf16\|int8\|fp8\|nvfp4\|k8v4\|rk8v4\|rk4v4\|rk4v4-e8\|rk2v4-e8` | KV-cache storage; rotated and E8-lattice modes trade key/value precision for capacity; `nvfp4` and `k8v4` are upstream sm_120a modes, not available on the RTX 4090 | `bf16` |
+| `--kv-dtype bf16\|int8\|fp8\|nvfp4\|k8v4\|rk8v4\|rk4v4\|rk4v4-e8\|rk2v4-e8` | KV-cache storage; rotated and E8-lattice modes trade key/value precision for capacity; `nvfp4` and `k8v4` need Blackwell (`sm_120a`) and are rejected by the `sm_89` build | `bf16` |
 | `--spec mtp\|dflash\|dflash2` | speculative backend | off |
 | `--draft-tokens N` | MTP `1..5`; DFlash/DFlash2 `1..15` | unset |
 | `--lm-head-draft` | optimized proposal head | off |

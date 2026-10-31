@@ -1,8 +1,8 @@
 # NInfer documentation
 
 Start with the [project README](../README.md) to download the prebuilt Windows binaries or build
-NInfer, download a model, and run the CLI or HTTP server. This fork targets one NVIDIA `sm_89`
-card (RTX 4090 or RTX 4080 SUPER) on native Windows.
+NInfer, download a model, and run the CLI or HTTP server. This fork targets one NVIDIA card at a
+time on native Windows: `sm_89` (RTX 4090 or RTX 4080 SUPER) or `sm_120a` (RTX 5060 Ti 16 GB).
 
 ## User guides
 

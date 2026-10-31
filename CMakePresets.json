@@ -24,6 +24,16 @@
       }
     },
     {
+      "name": "release-5060ti",
+      "displayName": "Release product binaries for RTX 5060 Ti 16 GB (36 SMs, sm_120a)",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build-5060ti",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "120a",
+        "NINFER_TARGET_SM_COUNT": "36"
+      }
+    },
+    {
       "name": "dev",
       "displayName": "Release products, tests and benchmarks",
       "inherits": "release",
@@ -36,6 +46,7 @@
   "buildPresets": [
     { "name": "release", "configurePreset": "release" },
     { "name": "release-4080s", "configurePreset": "release-4080s" },
+    { "name": "release-5060ti", "configurePreset": "release-5060ti" },
     { "name": "dev", "configurePreset": "dev" }
   ],
   "testPresets": [

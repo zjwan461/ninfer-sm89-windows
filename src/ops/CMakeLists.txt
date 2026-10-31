@@ -55,3 +55,28 @@ if(CMAKE_CUDA_ARCHITECTURES STREQUAL "86" OR CMAKE_CUDA_ARCHITECTURES STREQUAL "
   target_sources(ninfer_ops PRIVATE "${CMAKE_CURRENT_LIST_DIR}/nvfp4_sm86_stubs.cpp")
   target_compile_definitions(ninfer_ops PUBLIC NINFER_SM86=1)
 endif()
+
+# Fork-local MSVC limitation. nvcc's host stub passes a __grid_constant__ kernel parameter by
+# value, and MSVC rejects parameters whose alignment exceeds 64 bytes (C2719); cuda.h declares
+# CUtensorMap alignas(128), so the W4A4 TMA launchers cannot be compiled by MSVC on any
+# architecture. Drop those two translation units, stub their launchers, and downgrade AllowA4
+# activations to A16 (the same policy the sm_86/sm_89 build uses) so no route reaches them.
+# A toolchain that accepts the aligned parameter can rebuild them with
+# -DNINFER_BUILD_NVFP4_TMA=ON.
+if(MSVC)
+  set(NINFER_NVFP4_TMA_DEFAULT OFF)
+else()
+  set(NINFER_NVFP4_TMA_DEFAULT ON)
+endif()
+option(NINFER_BUILD_NVFP4_TMA
+  "Compile the NVFP4 W4A4 TMA route (MSVC cannot pass CUtensorMap kernel parameters)"
+  ${NINFER_NVFP4_TMA_DEFAULT})
+if(CMAKE_CUDA_ARCHITECTURES STREQUAL "120a" AND NOT NINFER_BUILD_NVFP4_TMA
+   AND TARGET ninfer_nvfp4_non_rdc)
+  get_target_property(nvfp4_non_rdc_sources ninfer_nvfp4_non_rdc SOURCES)
+  list(FILTER nvfp4_non_rdc_sources EXCLUDE REGEX "nvfp4_w4a4_tma\.cu$")
+  list(FILTER nvfp4_non_rdc_sources EXCLUDE REGEX "nvfp4_linear_swiglu_w4a4_tma\.cu$")
+  set_property(TARGET ninfer_nvfp4_non_rdc PROPERTY SOURCES ${nvfp4_non_rdc_sources})
+  target_sources(ninfer_ops PRIVATE "${CMAKE_CURRENT_LIST_DIR}/nvfp4_tma_msvc_stubs.cpp")
+  target_compile_definitions(ninfer_ops PUBLIC NINFER_NO_NVFP4_TMA=1)
+endif()
