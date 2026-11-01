@@ -5,6 +5,12 @@ rem Tuned for the RTX 4090 profile (NINFER_TARGET_SM_COUNT=128) -- see start-bon
 rem for the 80-SM RTX 4080 SUPER build. Only --prefill-chunk differs between the two; everything
 rem else adapts at runtime (KV capacity follows the measured free VRAM).
 rem
+rem Thinking/output budget is model-related, not card-related: all three Bonsai launchers
+rem (4090 / 4080s / 5060Ti) keep thinking enabled with a 32768-token thinking ceiling and a
+rem 65536-token total output budget. The budget is a ceiling, not a target; easy requests stop
+rem early. Measured 5060 Ti worst case for an SVG build: 32K thinking + 28K chars answer =
+rem 45,649 tokens in ~10 min. Lower it per deployment with NINFER_SERVE_ARGS if latency matters.
+rem
 rem Usage:
 rem   start-bonsai-rtx4090.bat [MODEL] [extra ninfer-serve args...]
 rem     MODEL  path to a .ninfer file, or to a directory containing one
@@ -72,7 +78,7 @@ echo Model: %MODEL%
 "%NINFER_SERVER%" "%MODEL%" ^
   --host 127.0.0.1 --port 8080 --model-id bonsai-27b ^
   --max-context 262144 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 3 ^
-  --prefill-chunk 1408 --default-max-tokens 32768 ^
+  --prefill-chunk 1408 --default-max-tokens 65536 --default-thinking-budget 32768 ^
   --spec mtp --draft-tokens 2 --lm-head-draft --ngram chain --vision %EXTRA% %NINFER_SERVE_ARGS%
 set "SERVE_EXIT=%ERRORLEVEL%"
 pause

@@ -134,6 +134,19 @@ def test_bonsai_preset_enables_vision() -> None:
     assert values["draft_tokens"] == 2
 
 
+def test_bonsai_presets_share_model_thinking_budget() -> None:
+    presets = {preset["name"]: preset["values"] for preset in config.builtin_presets()}
+    for name in (
+        "Bonsai2-27B VL · 4080s",
+        "Bonsai2-27B VL · 4090",
+        "Bonsai2-27B VL · 5060Ti",
+    ):
+        values = presets[name]
+        # 思考/输出预算是模型相关参数，不是显卡相关；三张卡的 Bonsai 预设必须一致。
+        assert values["default_thinking_budget"] == 32768, name
+        assert values["default_max_tokens"] == 65536, name
+
+
 def test_preset_matches_bonsai_5060ti_script() -> None:
     presets = {preset["name"]: preset["values"] for preset in config.builtin_presets()}
     values = presets["Bonsai2-27B VL · 5060Ti"]
@@ -145,10 +158,10 @@ def test_preset_matches_bonsai_5060ti_script() -> None:
         "kv_dtype": "rk4v4-e8",
         "max_concurrency": 2,
         "prefill_chunk": 768,
-        "default_max_tokens": 32768,
-        # Thinking stays on but is capped: uncapped reasoning can spend the whole 32768-token
-        # budget and stop a long answer mid-file (finish_reason "length").
-        "default_thinking_budget": 4096,
+        "default_max_tokens": 65536,
+        # Thinking is the point of this model: keep a deep ceiling (32K) and enough total output
+        # for the answer (64K). The budget is a ceiling, so easy requests still stop early.
+        "default_thinking_budget": 32768,
         "host_kv_mib": 2048,
         "spec": "mtp",
         "draft_tokens": 2,
