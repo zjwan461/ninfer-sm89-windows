@@ -1113,6 +1113,8 @@ def builtin_presets() -> list[dict[str, Any]]:
             max_context=131072,
             max_concurrency=2,
             prefill_chunk=768,
+            default_thinking_budget=4096,
+            host_kv_mib=2048,
             spec="mtp",
             draft_tokens=2,
             lm_head_draft=True,

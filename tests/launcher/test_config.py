@@ -146,6 +146,10 @@ def test_preset_matches_bonsai_5060ti_script() -> None:
         "max_concurrency": 2,
         "prefill_chunk": 768,
         "default_max_tokens": 32768,
+        # Thinking stays on but is capped: uncapped reasoning can spend the whole 32768-token
+        # budget and stop a long answer mid-file (finish_reason "length").
+        "default_thinking_budget": 4096,
+        "host_kv_mib": 2048,
         "spec": "mtp",
         "draft_tokens": 2,
         "lm_head_draft": True,

@@ -7,6 +7,15 @@ rem the 80-SM RTX 4080 SUPER build. Only --prefill-chunk and the default context
 rem the profiles (streaming weights are 6.4 GiB, so 16 GB leaves room for 131072 x 2 lanes);
 rem everything else adapts at runtime (KV capacity follows the measured free VRAM).
 rem
+rem Thinking stays enabled but is capped at 4K tokens (--default-thinking-budget 4096): a long
+rem code-generation answer otherwise spends the whole 32768-token output budget in reasoning and
+rem stops mid-file with finish_reason "length". Measured on this card, capping at 4096 finishes
+rem the same SVG request in ~20K tokens instead of hitting the limit at 32768.
+rem
+rem --host-kv-mib 2048: the 8 GiB pinned-host-KV default can fail with
+rem "cudaMallocHost ... out of memory" on a 32 GiB host that is busy; 2 GiB keeps the cache
+rem useful and starts reliably.
+rem
 rem If MTP CUDA-graph capture runs out of memory on a 16 GB card (the graph allowance is per
 rem profile class and lane), append --no-cuda-graph; decode loses the graph replay win but the
 rem server starts.
@@ -78,7 +87,8 @@ echo Model: %MODEL%
 "%NINFER_SERVER%" "%MODEL%" ^
   --host 127.0.0.1 --port 8080 --model-id bonsai-27b ^
   --max-context 131072 --kv-capacity auto --kv-dtype rk4v4-e8 --max-concurrency 2 ^
-  --prefill-chunk 768 --default-max-tokens 32768 ^
+  --prefill-chunk 768 --default-max-tokens 32768 --default-thinking-budget 4096 ^
+  --host-kv-mib 2048 ^
   --spec mtp --draft-tokens 2 --lm-head-draft --ngram chain --vision %EXTRA% %NINFER_SERVE_ARGS%
 set "SERVE_EXIT=%ERRORLEVEL%"
 pause
