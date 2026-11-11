@@ -42,6 +42,34 @@ decode was slightly faster (129.8 against 121.8 tok/s) thanks to higher MTP acce
 ([WINDOWS_PORT.md](WINDOWS_PORT.md#sampled-comparison-swift-15-against-base-2026-09-26)). Its
 license limits commercial use above a revenue threshold; see the model card.
 
+### DSpine draft model
+
+`--spec dspine` adds a fourth draft backend next to `mtp`, `dflash` and `dflash2`: a
+five-layer DSpine draft with a 16-token block, an 8192-token sliding window, a per-layer code bridge
+and a serial last-write refinement. It converts each layer's residual stream into a 1024-entry code
+so later block rows see the predecessor message, then re-scores the sixteen full-vocabulary
+candidates with the exact head before walking a greedy or sampled chain.
+
+On the RTX 4080 SUPER with the int8 artifact (greedy, thinking off, `rk4v4-e8`, CUDA Graphs on,
+one prompt per run):
+
+| Prompt | DSpine `--draft-tokens 15` | DFlash2 `--draft-tokens 8` | DFlash2 `--draft-tokens 15` |
+|---|---:|---:|---:|
+| merge-sorted function | **10.60 tok/round, 233 tok/s** | 7.95 | 10.53 |
+| HumanEval-style completion | 9.15 | 7.93 | 10.82 |
+| grade-school word problem | 5.54 | 5.54 | 6.54 |
+
+`--draft-tokens 15` is the same block the checkpoint was trained for (16 rows: one anchor plus
+fifteen drafts). At equal draft width the two drafts are close; the published comparison point
+(DSpine 16 against DFlash2 8) is where DSpine pulls ahead, matching the direction of the upstream
+table. The DSpine component is about 1.8 GiB of weights (the artifact is 19.22 GiB against 19.03 GiB
+for the DFlash2 one, which carries a 1.6 GiB DFlash2 draft instead), and it reuses the target head,
+so no extra head copy is loaded.
+
+Artifact: [zjwan461/Qwen3.8-27B-DSpine-int8-ninfer](https://huggingface.co/zjwan461/Qwen3.8-27B-DSpine-int8-ninfer).
+Bridge rounding contract, refinement formula, deliberate deviations and the host-oracle results:
+[docs/maintainer/dspine.md](docs/maintainer/dspine.md).
+
 Every figure in this README was measured on the same RTX 4090 under Windows unless it says
 otherwise; the conditions are next to each table. The RTX 4080 SUPER subsection under
 [Performance](#rtx-4080-super-80-sms-32-gb) is the exception -- it comes from the 80-SM
@@ -340,12 +368,14 @@ flags above (three lanes, sampling and thinking defaults), one request at a time
 
 ## Choosing settings
 
-**Speculation.** Every drafted token is verified by the model, so the output distribution does
-not change; only the speed does.
+**Speculation.** Four backends are available -- `--spec mtp`, `dflash`, `dflash2` and `dspine` --
+plus the `--ngram chain` extension. Every drafted token is verified by the model, so the output
+distribution does not change; only the speed does.
 
 | Model | Recommended | When to change |
 |---|---|---|
 | Bonsai | `--spec mtp --draft-tokens 2 --lm-head-draft --ngram chain` | `--draft-tokens 3` is up to 18 % faster on code and math and about 10 % slower on prose |
+| Qwen3.8 (DSpine) | `--spec dspine --draft-tokens 15` | `--draft-tokens 7` halves the draft work (6.6 against 10.6 accepted tokens per round); `--lm-head-draft` is rejected because the refinement scores the full-vocabulary candidates |
 | Qwen3.8 | `--spec mtp --draft-tokens 3 --lm-head-draft --ngram chain` | `--spec dflash2 --draft-tokens 6` is faster on free-form prose (99 against 85 tok/s through the server); `--draft-tokens 12` peaks at 211 tok/s on code. DFlash2 loads 1.6 GiB more weights; with three lanes, `--no-cuda-graph` frees about 1.1 GiB of graph memory for about 4 % of decode speed |
 
 `--ngram chain` extends each MTP proposal with text copied from the context, so rounds that
@@ -356,7 +386,8 @@ CUDA graphs (about 2.5 % of the KV pool) and changes nothing on text with nothin
 On the **RTX 4080 SUPER** this table still holds, with two caveats measured there: `--draft-tokens 3`
 is confirmed as the optimum for Qwen3.8 (74.9 tok/s on prose, 86.6 on code, against 64.6 / 63.7 at
 k=5), and the context/lane pairing is `262144 / 2` instead of three lanes because 262144 x 3 does
-not fit 32 GB. DFlash2 and the n-gram variants were not measured on that card.
+not fit 32 GB. DFlash2 and the n-gram variants were not measured on that card; DSpine is (233
+tok/s and 10.60 accepted tokens per round on code, see [above](#dspine-draft-model)).
 
 **KV cache.**
 
