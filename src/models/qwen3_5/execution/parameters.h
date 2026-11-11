@@ -104,6 +104,12 @@ struct DynamicConvParameters {
     LinearParameters kernel_projection;
 };
 
+// DSpine per-layer bridge operands. Both stay BF16, because the stored rounding defines the
+// codes and the refinement reproduces it.
+struct DraftBridgeParameters {
+    Tensor read, write;
+};
+
 struct DraftBlockParameters {
     Tensor input_norm, post_attention_norm;
     LinearParameters query_key_value, context_key, context_value;
@@ -111,6 +117,7 @@ struct DraftBlockParameters {
     LinearParameters output;
     DenseParameters mlp;
     std::optional<DynamicConvParameters> attention_conv, mlp_conv;
+    std::optional<DraftBridgeParameters> bridge;
 };
 
 struct SelectorParameters {
@@ -118,11 +125,18 @@ struct SelectorParameters {
     Tensor predecessor_codebook, successor_codebook;
 };
 
+struct DSpineBridgeParameters {
+    Tensor codebook;
+    Tensor gate, gate_bias, predecessor, value;
+    Tensor final_read;
+};
+
 struct DraftParameters {
     LinearParameters feature_projection;
     Tensor context_norm, final_norm;
     std::vector<DraftBlockParameters> layers;
     std::optional<SelectorParameters> selector;
+    std::optional<DSpineBridgeParameters> dspine;
     LinearParameters output_head;
 };
 

@@ -207,7 +207,7 @@ void complete_round_state_layout(LayoutBuilder& builder, RoundStateLayout& layou
             add_tensor(builder, DType::I32, {columns, batch}, "DFlash proposal positions");
         decode.verify_positions =
             add_tensor(builder, DType::I32, {columns, batch}, "target verify cache positions");
-        if (layout.spec.backend == SpeculativeBackend::DFlash2) {
+        if (is_sparse_draft_backend(layout.spec.backend)) {
             decode.candidate_ids =
                 add_tensor(builder, DType::I32, {16, columns - 1, batch}, "DFlash2 candidate ids");
             decode.proposal_q = add_tensor(builder, DType::FP32, {16, columns - 1, batch},

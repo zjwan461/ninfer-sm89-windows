@@ -28,6 +28,8 @@ using ContractAccess = RuntimeContractAccess;
 [[nodiscard]] inline std::uint32_t backend_frontier_at(SpeculativeBackend backend,
                                                        std::uint32_t main_frontier) noexcept {
     if (backend == SpeculativeBackend::Mtp) { return main_frontier == 0 ? 0U : main_frontier - 1U; }
+    // DFlash's Full backend KV follows the main frontier; DFlash2 and DSpine keep only the fixed
+    // cyclic draft state, whose absolute positions come from the request record.
     return backend == SpeculativeBackend::DFlash ? main_frontier : 0U;
 }
 

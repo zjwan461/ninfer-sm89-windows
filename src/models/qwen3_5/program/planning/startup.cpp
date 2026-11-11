@@ -666,6 +666,42 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                                         drafts, drafts, batch, batch));
                     return finish(layout);
                 }
+                if (draft->dspine.has_value()) {
+                    (void)workspace::dspine_round(layout, config, *draft, width, batch);
+                    {
+                        auto attention = layout.scope();
+                        (void)workspace::dspine_attention(layout, config, *draft, tokens);
+                        scratch(layout,
+                                ops::sliding_window_attention_workspace_capacity_bytes(
+                                    {dimension(draft->attention.head_dim),
+                                     dimension(draft->attention.num_attention_heads),
+                                     dimension(draft->attention.num_key_value_heads)},
+                                    dimension(draft->sliding_window.value_or(0)),
+                                    {0, plan.capacity}, width, width, batch));
+                        for (const auto& block : parameters.draft->layers) {
+                            add_scratch(layout, block.output, tokens, tokens);
+                        }
+                    }
+                    {
+                        auto mlp = layout.scope();
+                        (void)workspace::dflash_mlp(layout, config, *draft, tokens);
+                        for (const auto& block : parameters.draft->layers) {
+                            const auto& p = block.mlp.gate_up;
+                            scratch(layout, ops::linear_swiglu_workspace_capacity_bytes(
+                                                p.weight.qtype, p.weight.n, p.weight.k, p.policy,
+                                                tokens, tokens));
+                        }
+                        for (const auto& block : parameters.draft->layers) {
+                            add_scratch(layout, block.mlp.down, tokens, tokens);
+                        }
+                    }
+                    const auto mask_columns = drafts * batch;
+                    const auto& head        = parameters.draft->output_head;
+                    scratch(layout, ops::linear_topk_workspace_capacity_bytes(
+                                        head.weight.qtype, head.weight.n, head.weight.k,
+                                        mask_columns, mask_columns));
+                    return finish(layout);
+                }
                 {
                     auto attention = layout.scope();
                     (void)workspace::dflash_attention(layout, config, *draft, tokens);
@@ -725,7 +761,7 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                 target_body(target, aggregate, aggregate, qwen3_5::TextPhase::Verify,
                             GdnWorkspacePath::ReplayRecord, batch, verify, verify, text_envelope);
                 const std::size_t accept =
-                    draft->dflash2.has_value()
+                    is_sparse_draft_backend(plan.speculative_backend)
                         ? ops::speculative_accept_sparse_drafts_workspace_capacity_bytes(
                               dimension(parameters.model.resources().public_token_count), {false},
                               drafts, drafts, batch, batch)
@@ -836,6 +872,24 @@ void validate_target_options(const execution::Parameters& parameters, DeviceCont
             throw std::invalid_argument("masked draft window must be in [1,15]");
         }
         break;
+    case SpeculativeBackend::DSpine: {
+        if (!parameters.draft || !parameters.model.config().draft->dspine) {
+            throw std::invalid_argument("--spec dspine requires a dspine draft component");
+        }
+        if (options.speculative.proposal_head != ProposalHead::Full) {
+            throw std::invalid_argument("--spec dspine requires the full proposal head");
+        }
+        if (options.speculative.draft_tokens == 0 || options.speculative.draft_tokens > 15) {
+            throw std::invalid_argument("--spec dspine requires --draft-tokens in [1,15]");
+        }
+        // The trained block is anchor + block_size-1 proposals; a wider served block was never
+        // trained and the bridge's anchor/predecessor rows are defined per block.
+        if (options.speculative.draft_tokens + 1U >
+            parameters.model.config().draft->dspine->block_size) {
+            throw std::invalid_argument("--draft-tokens exceeds the DSpine trained block size");
+        }
+        break;
+    }
     }
     if (const NgramOptions& ngram = options.speculative.ngram; ngram.mode != NgramDraftMode::Off) {
         if (ngram.mode != NgramDraftMode::Chain) {

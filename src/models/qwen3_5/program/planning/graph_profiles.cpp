@@ -160,7 +160,11 @@ std::vector<GraphExecutionProfile> dflash_graph_profiles(SpeculativeBackend back
     if (capacity == 0 || draft_window == 0 || draft_window > 15) {
         throw std::invalid_argument("invalid masked draft graph dimensions");
     }
-    if (backend == SpeculativeBackend::DFlash2) {
+    if (is_sparse_draft_backend(backend)) {
+        // DFlash2 and DSpine add their own proposal nodes to the round (the candidate selector, or
+        // the code bridge, the refinement GEMMs and the chain walk). One executable per width range
+        // is what keeps every captured definition self-consistent, because the draft's own routes
+        // change with the visible context inside a range.
         auto profiles = graph_profiles_through(capacity - 1, {96, 511, 2047, 8191, 32767});
         for (std::size_t i = 0; i < profiles.size(); ++i) {
             profiles[i].topology_class = static_cast<std::uint32_t>(i);
