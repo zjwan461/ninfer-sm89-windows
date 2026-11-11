@@ -8,8 +8,16 @@
 
 ## 0. 一句话状态
 
-转换器（Python）已经把 `Qwen3.8-27B-DSpine-b16` 完整映射成一个 `dspine` 组件并逐张量对拍通过；
-**C++/CUDA 一行没动**（本会话没有 GPU、没有 nvcc，改了也无法编译验证）。
+这件事有**两层**，别混：
+
+1. **权重侧（不需要显卡）已经做完**：转换器能把 `Qwen3.8-27B-DSpine-b16` 完整映射成 `dspine`
+   组件，用真实 checkpoint 逐张量对拍通过；顺带在同一台无卡机器上产出了三份可发布的 `.ninfer`
+   产物（§2.5），组成与已发布的 jgamboa 产物一致。
+2. **运行时侧（缺的是代码，不是显卡）一行没动**：`SpeculativeBackend::DSpine`、配置解析、因果
+   块 mask、bridge 与精修两个 op、18 处引擎接线。没有 GPU 的真实限制不是「写不了」，而是
+   **能编译不能运行**——bridge 那 8 处 BF16 cast 只能靠逐层对拍确认，所以这些代码必须在有
+   nvcc + 4090 的会话里写。
+
 下一个会话从「T2 C++ 配置与绑定」开始，数学契约见第 5 节，不要自己重新推导。
 
 ---
@@ -22,7 +30,11 @@ feat/dspine-draft
 ├─ 477415fe  feat(rtx5060ti): sm_120a / 36-SM 支持
 ├─ 0c3f7ccf  fix(launcher): 5060 Ti 思考预算
 ├─ 83da6b55  fix(launcher): 统一 Bonsai 预设预算               <- 已合并 feat/rtx5060ti-bonsai
-└─ 458a7849  feat(convert): convert the Qwen3.8-27B DSpine draft as a dspine component
+├─ 458a7849  feat(convert): convert the Qwen3.8-27B DSpine draft as a dspine component
+├─ c56db4c9  docs: hand off the DSpine draft integration state
+├─ ddb04401  docs: record the pushed branch in the DSpine handoff
+├─ 4f4f83ef  test(convert): write and read back a dspine component end to end
+└─ (本文件更新)
 ```
 
 分支已 push 到 `origin/feat/dspine-draft`。本地 `main` 仍停在 `0916420a`，没有动。
@@ -93,13 +105,98 @@ slice checks OK                     # early_read / feature_write 逐层切片、
 
 ---
 
-## 3. 没做的，以及为什么
+## 2.5 三份产物：本会话已在本机产出（可作为发布基线）
 
-| 项 | 原因 |
-|---|---|
-| `SpeculativeBackend::DSpine` 与引擎接线 | 涉及 18 个文件与 switch 分支；本机没有 nvcc，改完无法编译，留下不能编译的代码只会拖慢下一个会话 |
-| `src/models/qwen3_5/config.cpp` 的 dspine 解析 | 需要先有枚举/组件名入口，否则是死代码（AGENTS.md 不允许占位实现） |
-| 因果块 mask、bridge op、refinement op | CUDA 数学，必须在有 GPU 的会话里对着 FP32 oracle 写 |
+三份都在无 GPU 的机器上用 `--device cpu` 转换完成。**组成与已发布的 jgamboa 产物一致，文件尺寸
+逐字节相同**（19.03 / 19.03 / 6.40 GiB）；内容没有跟已发布文件做逐字节 diff——转换是确定性的，
+但没有直接比对过。源权重全部按 HF 的 `lfs.oid` 校验过 sha256。
+
+| 仓库（用户已建） | 文件 | 字节 | 尺寸 | 转换耗时 |
+|---|---|---|---:|---:|---:|
+| `zjwan461/qwen3-8-27b-int8-ninfer` | `qwen3_8_27b_a8.ninfer` | 20,437,512,960 | 19.03 GiB | 351 s |
+| `zjwan461/swift-1-5-27b-ninfer` | `swift15_27b_a8.ninfer` | 20,437,520,896 | 19.03 GiB | 326 s |
+| `zjwan461/bonsai2-27b-ninfer` | `bonsai2_27b_vl_mtp_q4q5.ninfer` | 6,869,412,096 | 6.40 GiB | 348 s |
+
+sha256（本机算出，上传后用来核对）：
+
+```
+62c98d47704200c83ca5aa04e42358f1daefcb3840cef15c147bc57e7a44e8ff  qwen3_8_27b_a8.ninfer
+28c099be84606c7f328faf8e4e6666c8d488333c7ce65222a69b7c20d3ad38b5  swift15_27b_a8.ninfer
+e9e6f73db9d59fc509b49cd04fd409d7d757c1e61ab4cd8bc313fd014c2cb9f4  bonsai2_27b_vl_mtp_q4q5.ninfer
+```
+
+组成（`tools.artifact.inspect` 实测）：
+
+| 产物 | components | 张量 | 格式 |
+|---|---|---:|---|
+| qwen3.8 a8 | text, vision, mtp, dflash2 + proposal(131072) | 1184 | q4 183 / q5 246 / q6 1 / q8 30 / bf16 627 / fp32 96 |
+| swift a8 | text, vision, mtp, dflash2 + proposal(131072) | 1184 | 同上 |
+| bonsai | text, vision, mtp + proposal(131072) | 1058 | t5_g128 258（三元父对象）/ q4 57 / q5 57 / q8 3 / bf16 585 |
+
+**三份都不含 `dspine`**（`dspine/*` 绑定数为 0），理由与后续加法见 §7 决策 6。
+
+构建命令（云端复现用；本机路径换成你的）：
+
+```bash
+# 1) Qwen3.8-27B int8
+python3 -m tools.convert --model /tmp/src-qwen --recipe qwen3_8_27b_a8 \
+  --source dflash2=/tmp/src-dflash2 --components text,vision,mtp,dflash2 \
+  --proposal --name qwen3.8-27b --out /tmp/out/qwen3_8_27b_a8.ninfer --device cpu
+
+# 2) Swift 1.5 int8（同一 recipe，换源）
+python3 -m tools.convert --model /tmp/src-swift --recipe qwen3_8_27b_a8 \
+  --source dflash2=/tmp/src-dflash2 --components text,vision,mtp,dflash2 \
+  --proposal --name swift-1.5 --out /tmp/out/swift15_27b_a8.ninfer --device cpu
+
+# 3) Bonsai 2 27B（两步：先建 base，再烤）
+python3 -m tools.convert.bonsai_base \
+  --gguf .../Ternary-Bonsai-2-27B-PTQ1_0.gguf \
+  --reference /tmp/out/qwen3_8_27b_a8.ninfer \
+  --mmproj .../Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf --out /tmp/bonsai2-27b
+python3 -m tools.convert --model /tmp/bonsai2-27b --recipe bonsai2_27b_mtp_q4q5 \
+  --components text,vision,mtp \
+  --source gguf=.../PTQ1_0.gguf --source mmproj=.../mmproj-Q8_0.gguf \
+  --source mtp=/tmp/out/qwen3_8_27b_a8.ninfer \
+  --proposal --name bonsai2-27b --out /tmp/out/bonsai2_27b_vl_mtp_q4q5.ninfer --device cpu
+```
+
+两个用实测才定下来的细节：
+
+- **Bonsai 不能带 `dflash2`**。照 `docs/maintainer/bonsai-ternary-conversion.md` 的命令加
+  `--source dflash2=` 会得到 8.47 GiB；去掉（只留 text+vision+mtp+proposal）正好 **6.40 GiB**，
+  与已发布产物一致，也解释了 `tools/launcher/config.py` 里"Bonsai 只支持 `--spec mtp`"。
+- **`--proposal` 要带**。不带是 6.07 GiB，比已发布的小 0.33 GiB——正好是 131072 行索引头的体积。
+
+校验链（无一靠猜）：
+
+| 对象 | 校验 | 结果 |
+|---|---|---|
+| `Qwen/Qwen3.8-27B` | 32 个文件 sha256 vs `lfs.oid` | 32/32 通过 |
+| `ukisai/Swift-1.5-Qwen3.8-27b` | 同上 | 35/36 通过（缺的是一份 benchmarks json，不参与转换） |
+| `z-lab/Qwen3.8-27B-DFlash2` | 同上 | 权重与 config 2/2 通过 |
+| `prism-ml` PTQ1_0 / mmproj | sha256 | 均与 Hub 一致 |
+| 三份产物 | `tools.artifact.inspect` | 组件/绑定/用途/格式/布局全部可解析 |
+
+**没有验证的**：引擎实际加载。本机没有 CUDA，`inspect` 只证明文件框架与绑定表自洽，不证明
+4090 上能跑。这一点必须在 T1/T7 里补，不要当成已验证。
+
+---
+
+## 3. 没做的，以及为什么（别把"没卡所以做不了"当成理由）
+
+本机**没有 GPU 只挡住了运行时实现，没挡住权重与产物**——三份 `.ninfer` 就是无卡产出的（§2.5）。
+
+| 项 | 能不能在无卡机器上做 | 为什么没做 |
+|---|---|---|
+| 权重映射、组件转换、产物打包 | **能，已完成** | — |
+| 把 dspine 组件烤进产物 | **能，随时**（§7 决策 6 有命令） | 引擎选不中它，白加 3.77 GiB × 3；等 T2–T6 落地后一次重烤更划算 |
+| `SpeculativeBackend::DSpine` 与引擎接线 | 写得出，**编不过** | 18 个文件 + switch 分支，本机没有 nvcc；不可编译的代码只会拖慢下一个会话 |
+| `config.cpp` 的 dspine 解析 | 同上 | 没有枚举/组件入口就是死代码（AGENTS.md 不允许占位实现） |
+| 因果块 mask、bridge op、refinement op | **能编译、不能运行** | 这类 op 的正确性只能靠逐层 dump 对拍；没有卡写出来就是 2000 行猜测 |
+
+补一句准确的边界：装 nvcc 本身不需要 root 也做得到（runfile 解压即可），但**没有 GPU 就只能
+编译、不能跑对拍**。bridge 的 8 处 BF16 cast、f32 tiny floor、错位门控、`√C` 缩放，恰恰只有
+对拍能发现错。所以这不是"环境缺卡所以整件事做不了"，而是"缺卡所以最后那一段必须换机器"。
 
 ---
 
@@ -279,8 +376,22 @@ token       a      MASK ... MASK      mask_token_id=248070
 3. **不加枚举值以外的「临时」C++ 代码**：本会话所有 C++ 都留给有编译器的会话。
 4. **DSpine 必须用全词表 head**：`--lm-head-draft` 的 131072 行 shortlist 会改变 top-16 候选集合，
    接受长度会掉；第一版走 `ProposalHead::Full`（Q8 全词表 head ≈1.27 GB）。
-5. **目标权重不动**：现有 `qwen3_8_27b` / `_nvfp4` 产物继续用，只是重新打包一份带 `dspine` 组件的产物
-   （`--source reference=<旧产物>` 的 `import_encoded` 直通，不重新量化）。
+5. **目标权重不动**：现有 `qwen3_8_27b` / `_nvfp4` 产物继续用，只是重新打包一份带 `dspine` 组件的产物。
+   注意 `--source reference=` 的直通**不能用来加组件**：`tools/convert/official_recipes.py:141`
+   要求参考产物含全部逻辑参数，旧产物没有 `dspine/*` 会直接报错。要么用原始 BF16 源重烤，要么先
+   把 `_import_stored` 改成"按参考产物实际拥有的组件导入"。
+6. **三份已发布产物里没有 dspine，且暂时不要加**。dspine 组件 2,025,387,780 个 BF16 元素
+   = 3.77 GiB（bridge 563 MiB 必须 BF16 + backbone 3.22 GiB）。加进去功能上无害（引擎只加载
+   启动时选中的组件），但现在没有 `--spec dspine`，白白多传 3.77 GiB × 3。等 T2–T6 落地后加：
+
+   ```bash
+   python3 -m tools.convert --model /tmp/src-qwen --recipe qwen3_8_27b_a8 \
+     --source dflash2=... --source dspine=.../Qwen3.8-27B-DSpine-b16 \
+     --components text,vision,mtp,dflash2,dspine --proposal --name qwen3.8-27b \
+     --out .../qwen3_8_27b_a8_dspine.ninfer --device cpu     # 约 22.8 GiB
+   ```
+
+   到那时再按实测决定 backbone 要不要 Q8，可把 3.77 GiB 压到约 2.3 GiB。
 
 ---
 
@@ -290,6 +401,8 @@ token       a      MASK ... MASK      mask_token_id=248070
 2. 单请求 decode 超过 `--spec dflash2 --draft-tokens 7` 的基线（4090 上约 134 tok/s 的推算值）。
 3. 24 GB 卡上 32k 上下文稳定 200 轮；`--draft-tokens 7` 时上下文上限写进 README。
 4. bridge 的 8 个 BF16 cast boundary 在 `docs/maintainer/dspine.md` 里有契约记录。
+5. 引擎能把 §2.5 的三份产物正常加载（`--spec mtp` / `--spec dflash2` 各跑一次），证明无卡产出的
+   文件在真实引擎里可用——这一条现在**没有**证据，只有 `inspect` 的结构自洽。
 
 ---
 
@@ -329,3 +442,67 @@ git fetch /path/to/ninfer-dspine-draft.bundle feat/dspine-draft:feat/dspine-draf
 python3 -m pytest tests/convert -q
 python3 -m tools.convert --help     # 现在接受 --source dspine=PATH
 ```
+
+---
+
+## 11. 本会话的操作记录（下一个会话别重复踩）
+
+### 11.1 下载限速：只靠 `curl --limit-rate`，不要碰 eth0
+
+用户要求下载总量不超过 20 MB/s。可用的做法是**每连接限速**，不是全局整形（不要动 `eth0` 的
+配置，那是服务器的网络设置）：
+
+```bash
+# 8 个连接 × 2.4 MiB/s ≈ 19.2 MiB/s
+cat files.txt | xargs -P 8 -I{} curl -sL -C - --limit-rate 2400k --retry 3 \
+    --max-time 5400 -o "/tmp/src/{}" "https://huggingface.co/<repo>/resolve/main/{}"
+```
+
+**踩过的坑**：`job_kill` 只杀外层 shell，`hf download` 的 python 子进程会活下来，继续无限速往
+`<local-dir>/.cache/huggingface/download/` 写。表现是接口速率翻倍（测到 32–39 MiB/s）、`du` 比
+实际模型文件大一倍。处理：`pkill -f 'hf download'` + 删掉 `.cache`。别再混用 `hf download` 和
+`curl` 写同一个目录。
+
+### 11.2 上传限速：`/tmp/hf_upload_limited.py`（未实测，等 token）
+
+`hf upload` 没有限速参数，新版默认走 Xet（Rust 内读文件，Python 拦不住）。做法：
+
+- `HF_HUB_DISABLE_XET=1` 强制走经典 LFS 单次 PUT；
+- 包装 `huggingface_hub._commit_api.CommitOperationAdd.as_file`，给返回的文件对象套一个读代理，
+  每次 `read()` 后按已发送字节数补 `sleep`；
+- 入口：`UPLOAD_MIB=<n> HF_TOKEN=... python3 /tmp/hf_upload_limited.py <repo> <file> <path_in_repo>`。
+
+**还没验证**：token 未到，脚本一次都没跑过。第一次务必先传几 MB 的文件，用 `/proc/net/dev`
+核对实际速率，再传 19 GiB。
+
+### 11.3 CPU 转换很便宜，别把它当成瓶颈
+
+- 单张 89.1M 元素的 MLP 矩阵，`q4_g64_fp16` 量化 **0.24 s ≈ 378 M 元素/s**（16 线程）；
+- 整份 27B（1184 个参数、读 51.8 GiB、写 19 GiB）**351 s**；Bonsai（1058 个参数）**348 s**；
+- 真正的瓶颈是磁盘 I/O 与下载，不是算力。所以"没有 GPU 也能出产物"是这个项目的常态。
+
+### 11.4 `bonsai_mapping_check` 在 PTQ1_0 上会误报
+
+该工具用 `ternary = source.read_encoded is not None` 判断行是不是三元，再决定门槛
+（三元 0.80 / 直连 0.98）。PTQ1_0 这个 GGUF 张量类型它不识别，于是把三元行标成 `direct`，
+拿 0.98 的门槛判 **NO**。实测那些行的行余弦是 **0.87–0.88**，正好是文档写的三元平台值
+（"a wrong mapping collapses to ~0"），所以是标记问题、不是映射问题。
+
+**待 GPU 侧确认**：T7 里用 `--spec mtp` 跑一次 Bonsai，接受长度正常即证明映射可用。若要把工具
+修好，判据应改成"按 GGUF 张量类型判断"，而不是 `read_encoded`。
+
+### 11.5 Bonsai 的 chat template 与参考不同
+
+`bonsai_base` 打印 `reference DIFFERS FROM the GGUF's`，并把 GGUF 自带模板另存为
+`gguf_chat_template.jinja`。当前三份产物用的是参考（Qwen3.8）模板。若要改成 GGUF 自带模板：
+
+```bash
+--resource chat_template.jinja=/tmp/bonsai2-27b/gguf_chat_template.jinja
+```
+
+重烤一次即可（348 s）。哪个更对，建议在 4090 上对比同一组 prompt 的回答，别凭直觉定。
+
+### 11.6 磁盘与清理
+
+源权重（Qwen BF16 51.8 + Swift BF16 51.8 + DFlash2 3.6 + Bonsai GGUF 5.5 + mmproj 0.6 ≈ 113 GiB）
++ 产物 45 GiB。产物上传完、源权重确认可再下之后，`/tmp` 下的 `src-*` 可以删。
