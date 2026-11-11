@@ -132,13 +132,18 @@ def _import_stored(model, recipe, reference: NInferArtifactStore) -> None:
     """Take every parameter, the indexed proposal head and the resources from `reference`, an
     artifact of the same recipe: grouped-integer parents as stored codes and scales
     (`import_encoded`), direct values as stored. Formats, parents and sharing stay those the
-    recipe already selected; a format that differs from the stored one fails."""
+    recipe already selected; a format that differs from the stored one fails. Parameters the
+    reference does not ship keep their own source and recipe, which is how a new component (for
+    example `dspine`) is added to an existing artifact."""
     stored = set(reference.parameters())
     for name, parameter in list(model.parameters.items()):
         if name in recipe.aliases:
             continue
         if name not in stored:
-            raise ValueError(f"reference artifact has no parameter {name}")
+            # A source that adds a component the reference does not ship (for example `dspine`)
+            # keeps that component's own source and recipe: the reference supplies exactly the
+            # parameters it has.
+            continue
         format = reference.stored_format(name)
         if any(selection.format != format for selection in recipe.selections[name]):
             raise ValueError(f"{name}: reference stores {format}, the recipe selects another format")
