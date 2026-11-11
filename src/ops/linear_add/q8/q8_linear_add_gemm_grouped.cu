@@ -25,7 +25,9 @@ void launch(const Tensor& x, const Weight& w, Tensor& residual, cudaStream_t str
 
 void q8_linear_add_grouped_launch(const Tensor& x, const Weight& w, Tensor& residual,
                                   cudaStream_t stream) {
-    if (w.k == 6144) {
+    if (w.k == 4096) {
+        launch<4096>(x, w, residual, stream);
+    } else if (w.k == 6144) {
         launch<6144>(x, w, residual, stream);
     } else {
         launch<17408>(x, w, residual, stream);

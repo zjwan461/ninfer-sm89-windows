@@ -46,7 +46,9 @@ Launch select_small(std::int32_t tokens) {
 
 void q8_linear_add_splitk_capacity_launch(const Tensor& x, const Weight& w, Tensor& residual,
                                           cudaStream_t stream) {
-    if (w.k == 6144) {
+    if (w.k == 4096) {
+        select_small<Q8LinearGeometry<5120, 4096>>(x.ne[1])(x, w, residual, stream);
+    } else if (w.k == 6144) {
         select_small<Q8LinearGeometry<5120, 6144>>(x.ne[1])(x, w, residual, stream);
     } else {
         select_small<Q8LinearGeometry<5120, 17408>>(x.ne[1])(x, w, residual, stream);

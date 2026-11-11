@@ -206,8 +206,11 @@ bool q8_linear_add_schedule_uses_mma(Q8LinearAddScheduleId schedule) noexcept {
 }
 
 bool q8_linear_add_admits(const Q8LinearAddProblem& problem) noexcept {
+    // [5120,4096] is the masked-draft attention output projection (32 query heads of width 128);
+    // [5120,6144] and [5120,17408] are the dense text MLP widths.
     const bool shape = (problem.rows == 2048 && (problem.k == 4096 || problem.k == 6144)) ||
-                       (problem.rows == 5120 && (problem.k == 6144 || problem.k == 17408));
+                       (problem.rows == 5120 &&
+                        (problem.k == 4096 || problem.k == 6144 || problem.k == 17408));
     return shape && problem.padded_k == problem.k && problem.cols >= 1;
 }
 

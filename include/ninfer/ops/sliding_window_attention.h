@@ -18,6 +18,15 @@ struct SlidingWindowAttentionExecutionEnvelope {
     std::uint32_t max_context = 0;
 };
 
+// Visibility of the temporary query rows. `ContextWindow` exposes every live query row of the
+// block (DFlash/DFlash2 masked drafts); `BlockCausal` exposes only the block rows at or before
+// the query row, which is the DSpine causal draft block. Context K/V visitity is the symmetric
+// window in both modes.
+enum class SlidingWindowMask : std::uint8_t {
+    ContextWindow,
+    BlockCausal,
+};
+
 /**
  * Symmetric non-causal sliding-window grouped-query attention.
  *
@@ -51,7 +60,7 @@ struct SlidingWindowAttentionExecutionEnvelope {
 void sliding_window_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
                               const Tensor& positions, const Tensor& valid_columns,
                               const Tensor& lanes, AttentionHeadGeometry geometry,
-                              std::uint32_t window, float scale,
+                              std::uint32_t window, float scale, SlidingWindowMask mask,
                               const CyclicKVCacheLayerView& context,
                               SlidingWindowAttentionExecutionEnvelope envelope,
                               WorkspaceArena& workspace, Tensor& out, cudaStream_t stream);
