@@ -92,7 +92,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
 )
 
 KV_DTYPES = ("bf16", "int8", "fp8", "nvfp4", "k8v4", "rk8v4", "rk4v4", "rk4v4-e8", "rk2v4-e8")
-SPECS = ("mtp", "dflash", "dflash2")
+SPECS = ("mtp", "dflash", "dflash2", "dspine")
 LOG_LEVELS = ("trace", "debug", "info", "warning", "error", "critical", "off")
 
 
@@ -604,7 +604,9 @@ class ArtifactInfo:
 
     @property
     def speculative_backends(self) -> tuple[str, ...]:
-        return tuple(name for name in ("mtp", "dflash", "dflash2") if name in self.components)
+        return tuple(
+            name for name in ("mtp", "dflash", "dflash2", "dspine") if name in self.components
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -952,8 +954,10 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
     if spec:
         if draft is None:
             errors.append("使用 --spec 时必须填写 --draft-tokens")
-        elif spec == "dflash2" and not 1 <= draft <= 15:
-            errors.append("DFlash2 的 --draft-tokens 合法范围是 1–15")
+        elif spec in ("dflash2", "dspine") and not 1 <= draft <= 15:
+            errors.append(f"{spec} 的 --draft-tokens 合法范围是 1–15")
+        if spec == "dspine" and values.get("lm_head_draft"):
+            errors.append("DSpine 必须用全词表 head，不能配 --lm-head-draft")
     elif draft is not None:
         warnings.append("填写了 --draft-tokens 但未选择 --spec，该参数不会生效")
     if values.get("lm_head_draft") and not spec:
@@ -1029,9 +1033,15 @@ def builtin_presets() -> list[dict[str, Any]]:
 
     qwen = resolve_artifact("qwen3_8_27b_a8.ninfer", roots)
     bonsai = resolve_artifact("bonsai2_27b_vl_mtp_q4q5.ninfer", roots)
+    dspine = resolve_artifact("qwen3_8_27b_a8_dspine.ninfer", roots)
     # 容器目录布局（<name>/<name>.ninfer）在 .bat 里是靠目录参数解析的，这里直接指向文件。
     qwen = qwen if qwen.lower().endswith(".ninfer") else str(Path(qwen) / "qwen3_8_27b_a8.ninfer")
     bonsai = bonsai if bonsai.lower().endswith(".ninfer") else str(Path(bonsai) / "bonsai2_27b_vl_mtp_q4q5.ninfer")
+    dspine = (
+        dspine
+        if dspine.lower().endswith(".ninfer")
+        else str(Path(dspine) / "qwen3_8_27b_a8_dspine.ninfer")
+    )
 
     base = {
         "kv_capacity": "auto",
@@ -1048,7 +1058,7 @@ def builtin_presets() -> list[dict[str, Any]]:
         values.update(overrides)
         return {"name": name, "values": values}
 
-    return [
+    presets = [
         profile(
             "Qwen3.8-27B int8 · 4080s", engine_4080s, qwen,
             model_id="qwen3.8-27b",
@@ -1127,6 +1137,26 @@ def builtin_presets() -> list[dict[str, Any]]:
             vision=True,
         ),
     ]
+    if Path(dspine).is_file():
+        # DSpine 只换 draft：目标权重与上面的 int8 产物相同（新产物从旧产物导入）。
+        presets.append(
+            profile(
+                "Qwen3.8-27B int8 + DSpine · 4080s", engine_4080s, dspine,
+                model_id="qwen3.8-27b",
+                max_context=262144,
+                max_concurrency=2,
+                prefill_chunk=1024,
+                max_pending_requests=10,
+                pending_timeout_ms=600000,
+                spec="dspine",
+                draft_tokens=15,
+                preserve_thinking=True,
+                device_state_slots=3,
+                host_state_slots=4,
+                host_kv_mib=4096,
+            )
+        )
+    return presets
 
 
 # ---------------------------------------------------------------------- 存储
