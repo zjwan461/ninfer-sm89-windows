@@ -113,7 +113,13 @@ are independent.
 The `dspine` component converts a `Qwen3.8-27B-*DSpine*` draft: its backbone takes the usual Q8
 projection format, while every code-bridge tensor stays BF16 because the bridge rounding defines
 the draft codes. The converter validates the checkpoint's bridge geometry and writes the component;
-no runtime backend selects it yet.
+`--spec dspine` selects it at startup (see [DSpine draft](maintainer/dspine.md)).
+
+Adding a component to an artifact that already exists does not need the original BF16 checkpoint:
+with `--source reference=OLD.ninfer --source dspine=PATH`, the recipe imports every parameter the
+reference ships from its stored words and converts only the parameters it lacks. The composition
+must still select every component the reference holds, because the model is built from the
+`--components` list.
 
 ## Change part of a recipe
 

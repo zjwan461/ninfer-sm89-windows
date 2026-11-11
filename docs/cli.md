@@ -85,9 +85,9 @@ output capacity for the inserted suffix and the answer:
 
 GPU residency is frozen when the Engine starts:
 
-- no `--spec` omits MTP/DFlash/DFlash2 weights and state and the optimized proposal head;
-- `--spec mtp`, `--spec dflash` (35B-A3B), and `--spec dflash2` (Qwen3.8-27B) load only
-  the selected speculative backend;
+- no `--spec` omits MTP/DFlash/DFlash2/DSpine weights and state and the optimized proposal head;
+- `--spec mtp`, `--spec dflash` (35B-A3B), `--spec dflash2` (Qwen3.8-27B) and `--spec dspine`
+  (Qwen3.8-27B DSpine-b16) load only the selected speculative backend;
 - a speculative backend with the full proposal head omits the optimized proposal head;
 - Vision is disabled by default, omitting its weights and Vision-specific unified-workspace extent;
 - `--vision` loads the weights, expands the one Program workspace for Vision encode/handoff, and
@@ -163,9 +163,10 @@ long-decode, and long-context inputs.
 ## Speculative decoding
 
 Speculative decoding is disabled by default. Select MTP with one to five draft positions, or the
-35B-A3B DFlash or Qwen3.8-27B DFlash2 backend with one to fifteen. Both masked-draft backends
-may be combined with `--vision`.
-`--lm-head-draft` selects the optimized proposal head and requires a selected backend:
+35B-A3B DFlash, Qwen3.8-27B DFlash2 or Qwen3.8-27B DSpine backend with one to fifteen. The
+masked-draft backends may be combined with `--vision`.
+`--lm-head-draft` selects the optimized proposal head and requires a selected backend; DSpine
+rejects it, because its refinement compares the sixteen full-vocabulary candidates:
 
 ```bash
 ./build/apps/ninfer models/qwen3_6_35b_a3b.ninfer \
@@ -208,6 +209,12 @@ Both `groupwise-int` and `nvfp4` artifacts use the same Engine route, including 
 concurrent requests, sampling penalties, and prefix reuse. An artifact without the companion
 weights reports a missing DFlash2 component when selected. Vision, MTP and DFlash follow the same
 rule: their weights are required only when that component is enabled at startup.
+
+For artifacts containing the DSpine draft component, select `--spec dspine --draft-tokens 7`
+(one to fifteen, up to the checkpoint's trained block width minus one). DSpine always uses the
+full-vocabulary head, so `--lm-head-draft` is rejected, and it accepts `--vision` like the other
+masked-draft backends. The summary reports the backend name in the draft counters. The model
+mathematics and its rounding contract are in [DSpine draft](maintainer/dspine.md).
 
 Only one speculative backend can be enabled per Engine. The published [performance results](performance.md)
 use MTP with three draft tokens and DFlash with seven draft tokens (block length eight), both with
