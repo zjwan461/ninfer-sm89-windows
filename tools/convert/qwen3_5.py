@@ -218,13 +218,84 @@ def vision_config(source: dict, text: dict) -> dict:
     return result
 
 
+_DRAFT_ARCHITECTURES = {
+    "dflash": "DFlashDraftModel",
+    "dflash2": "DFlash2DraftModel",
+    # DSpine keeps the DFlash architecture name in its checkpoint and is selected by its own
+    # code-bridge config block instead.
+    "dspine": "DFlashDraftModel",
+}
+
+
+def _dspine_bridge(raw: dict, backend: str, layers: int) -> dict:
+    """Validate the DSpine code-bridge blocks and normalize them to 0-based layer ids."""
+    draft = raw["dflash_config"]
+    if draft.get("draft_block_causal") is not True:
+        raise ValueError(f"{backend}: requires draft_block_causal")
+    for key, expected in (
+        ("selected_prefix_terminal", False),
+        ("selected_prefix_decode_mode", "serial"),
+        ("selected_prefix_feature_writes", True),
+        ("selected_prefix_feature_write_mode", "independent"),
+    ):
+        _fixed(draft, key, expected, backend)
+    if draft.get("conv_kernel_size") or draft.get("conv_group_size"):
+        raise ValueError(f"{backend}: the grouped convolution is not part of DSpine")
+    bridge = draft.get("selected_prefix_code_bridge")
+    if not isinstance(bridge, dict):
+        raise ValueError(f"{backend}: missing selected_prefix_code_bridge")
+    code_size = _positive(bridge.get("code_size"), backend + ".code_size")
+    rank = _positive(bridge.get("rank"), backend + ".rank")
+    eps = _f32(bridge.get("eps"), backend + ".code_bridge_eps")
+    if not 0 < eps < 1:
+        raise ValueError(f"{backend}: code bridge epsilon must be in (0,1)")
+    kappa = bridge.get("kappa")
+    if kappa is not None and _f32(kappa, backend + ".kappa") <= 0:
+        raise ValueError(f"{backend}: code bridge kappa must be positive")
+    feature = draft.get("selected_prefix_feature_layers")
+    if not isinstance(feature, list) or any(type(i) is not int for i in feature):
+        raise ValueError(f"{backend}: missing selected_prefix_feature_layers")
+    # The checkpoint writes one-based draft layer ids.
+    writes = tuple(i - 1 for i in feature)
+    if writes != tuple(range(layers)):
+        raise ValueError(f"{backend}: every draft layer must carry a bridge write")
+    refine = draft.get("selected_prefix_last_write_refine")
+    if not isinstance(refine, dict) or refine.get("kind") != "exact_sender":
+        raise ValueError(f"{backend}: requires an exact_sender last-write refinement")
+    if int(refine.get("version", 0)) != 1:
+        raise ValueError(f"{backend}: unsupported last-write refinement version")
+    if float(refine.get("weight", -1)) < 0:
+        raise ValueError(f"{backend}: last-write refinement weight must be nonnegative")
+    second = raw.get("code_bridge_second_pass")
+    if not isinstance(second, dict) or second.get("mode") != "serial_table":
+        raise ValueError(f"{backend}: requires code_bridge_second_pass serial_table")
+    if int(second.get("first_exact", -1)) != layers - 1:
+        raise ValueError(
+            f"{backend}: first_exact must be layers-1 (only the last write is redone)"
+        )
+    widths = {int(refine.get("head_topk", 0)), int(second.get("head_topk", 0))}
+    if len(widths) != 1:
+        raise ValueError(f"{backend}: refinement width differs between config blocks")
+    head_topk = widths.pop()
+    if head_topk & (head_topk - 1) or not 2 <= head_topk <= 64:
+        raise ValueError(f"{backend}: head_topk must be a power of two in [2,64]")
+    return {
+        "code_size": code_size,
+        "rank": rank,
+        "eps": eps,
+        "kappa": None if kappa is None else _f32(kappa, backend + ".kappa"),
+        "feature_layers": list(writes),
+        "head_topk": head_topk,
+    }
+
+
 def draft_config(raw: dict, target: dict, backend: str) -> dict:
-    architecture = "DFlash2DraftModel" if backend == "dflash2" else "DFlashDraftModel"
+    architecture = _DRAFT_ARCHITECTURES[backend]
     _fixed(raw, "architectures", [architecture], backend)
     _fixed(raw, "model_type", "qwen3", backend)
     _fixed(raw, "hidden_act", "silu", backend)
     _fixed(raw, "attention_bias", False, backend)
-    _fixed(raw, "is_causal", False, backend)
+    _fixed(raw, "is_causal", backend == "dspine", backend)
     for key, value in (
         ("hidden_size", target["hidden_size"]),
         ("vocab_size", target["vocab_size"]),
@@ -316,6 +387,27 @@ def draft_config(raw: dict, target: dict, backend: str) -> dict:
                 _fixed(scope, key, expected, backend)
             if scope.get("final_logit_softcapping") not in (None, 0, 0.0):
                 raise ValueError("DFlash2 final_logit_softcapping must be disabled")
+    elif backend == "dspine":
+        block = raw.get("block_size")
+        if type(block) is not int or not 2 <= block <= 64:
+            raise ValueError(f"{backend}: block_size must be in [2,64]")
+        draft_vocab = raw.get("draft_vocab_size")
+        if draft_vocab is not None and draft_vocab != target["vocab_size"]:
+            raise ValueError(f"{backend}: draft_vocab_size differs from the target vocabulary")
+        for scope in (raw, draft):
+            for key, expected in (
+                ("sample_from_anchor", False),
+                ("input_embedding_scale", 1.0),
+                ("output_multiplier", 1.0),
+            ):
+                _fixed(scope, key, expected, backend)
+            if scope.get("final_logit_softcapping") not in (None, 0, 0.0):
+                raise ValueError("DSpine final_logit_softcapping must be disabled")
+        output["draft_block_causal"] = True
+        output["block_size"] = block
+        output["code_bridge"] = _dspine_bridge(
+            raw, backend, result["num_hidden_layers"]
+        )
     result["dflash_config"] = output
     return result
 
@@ -812,6 +904,78 @@ class _Builder:
                 inputs=inputs,
             )
 
+    @staticmethod
+    def _dspine_version(store, name: str) -> None:
+        info = store.describe(name)
+        if info.shape != ():
+            raise ValueError(f"{name}: expected a scalar version tensor")
+        value = int(store.read_flat(name, 0, 1).reshape(-1)[0].item())
+        if value != 1:
+            raise ValueError(f"{name}: unsupported version {value}")
+
+    def dspine_bridge(self, store, prefix, index, layers, h, bridge):
+        """One draft layer's bridge read/write pair. Later layers read the target-context stream
+        too, so the read projection is shared with the context prefill exactly as DFlash shares
+        its K/V projections."""
+        code, rank = bridge["code_size"], bridge["rank"]
+        read = prefix + "bridge/read"
+        if index < layers - 1:
+            self.add(
+                read,
+                store,
+                "selected_prefix_bridge.early_read_weights",
+                (code, h),
+                source_shape=(layers - 1, code, h),
+                offset=index * code * h,
+            )
+        else:
+            self.add(read, store, "selected_prefix_bridge.read_weight", (code, h))
+        self.add(
+            prefix + "bridge/write",
+            store,
+            "selected_prefix_bridge.feature_write_weights",
+            (h, rank),
+            source_shape=(layers, h, rank),
+            offset=index * h * rank,
+        )
+
+    def dspine_shared(self, store, target, bridge):
+        """The bridge tensors every write and the last-write refinement read."""
+        for name in (
+            "draft_block_causal_version",
+            "last_write_refine_version",
+            "selected_prefix_bridge.independent_write_version",
+            "selected_prefix_bridge.terminal_disabled_version",
+        ):
+            self._dspine_version(store, name)
+        terminal = store.describe("selected_prefix_bridge.out.weight")
+        h, code, rank = target["hidden_size"], bridge["code_size"], bridge["rank"]
+        if terminal.shape != (code, rank):
+            raise ValueError("selected_prefix_bridge.out.weight: unexpected shape")
+        if bool(store.read_flat("selected_prefix_bridge.out.weight", 0, code * rank).any()):
+            raise ValueError(
+                "terminal-disabled checkpoint carries a nonzero terminal projection"
+            )
+        self.add(
+            "dspine/bridge/codebook",
+            store,
+            "selected_prefix_bridge.codebook",
+            (target["vocab_size"], code),
+        )
+        for name, field, shape in (
+            ("gate_projection", "gate.weight", (rank, code)),
+            ("gate_bias", "gate.bias", (rank,)),
+            ("predecessor_projection", "predecessor_gate.weight", (rank, code)),
+            ("value_projection", "prev.weight", (rank, code)),
+            ("final_read", "read_weight", (code, h)),
+        ):
+            self.add(
+                "dspine/bridge/" + name,
+                store,
+                "selected_prefix_bridge." + field,
+                shape,
+            )
+
     def draft(self, store, config, target, backend):
         h, d = target["hidden_size"], config["head_dim"]
         q, k = config["num_attention_heads"] * d, config["num_key_value_heads"] * d
@@ -886,6 +1050,17 @@ class _Builder:
                         (2 * taps * groups, h),
                         inputs=(p + branch + "_input",),
                     )
+            if backend == "dspine":
+                self.dspine_bridge(
+                    store,
+                    p,
+                    i,
+                    config["num_hidden_layers"],
+                    h,
+                    draft["code_bridge"],
+                )
+        if backend == "dspine":
+            self.dspine_shared(store, target, draft["code_bridge"])
         if backend == "dflash2":
             rank = draft["selector_rank"]
             self.add(
@@ -918,6 +1093,7 @@ def build_model(
         "mtp",
         "dflash",
         "dflash2",
+        "dspine",
     }:
         raise ValueError("select text and supported optional components")
     companions = {} if companions is None else companions
@@ -931,7 +1107,7 @@ def build_model(
     if "mtp" in selected:
         architecture = "Qwen3_5MoeMTP" if "num_experts" in config else "Qwen3_5MTP"
         records["mtp"] = {"config": {"architectures": [architecture]}, "target": "text"}
-    for backend in ("dflash", "dflash2"):
+    for backend in ("dflash", "dflash2", "dspine"):
         if backend in selected:
             if backend not in companions:
                 raise ValueError(f"selected {backend} requires its source")
@@ -962,7 +1138,7 @@ def build_model(
         else "lm_head.weight"
     )
     head_inputs = ("text/final_hidden",) + tuple(
-        c + "/final_hidden" for c in ("mtp", "dflash", "dflash2") if c in selected
+        c + "/final_hidden" for c in ("mtp", "dflash", "dflash2", "dspine") if c in selected
     )
     builder.add("text/output_head", base, head_source, (r, h), inputs=head_inputs)
     builder.add("text/final_norm", base, text_prefix + "norm.weight", (h,))
@@ -987,7 +1163,7 @@ def build_model(
         builder.block("mtp/layers/0/", "mtp.layers.0.", base, config, "full_attention")
     if "vision" in selected:
         builder.vision(base, records["vision"]["config"], h)
-    for backend in ("dflash", "dflash2"):
+    for backend in ("dflash", "dflash2", "dspine"):
         if backend in selected:
             if (
                 backend == "dflash2"

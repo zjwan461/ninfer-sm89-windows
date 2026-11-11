@@ -124,6 +124,24 @@ struct DFlash2Config {
     std::uint32_t selector_top_k   = 0;
 };
 
+// The DSpine code bridge: a per-layer write that folds a codebook message back into the draft
+// residual stream, plus the serial last-write refinement width.
+struct DSpineCodeBridge {
+    std::uint32_t code_size  = 0;
+    std::uint32_t rank       = 0;
+    std::uint32_t head_topk  = 0;
+    float eps                = 0.F;
+    float kappa              = 0.F; // parsed for the contract; the bridge never applies it
+    bool has_kappa           = false;
+};
+
+struct DSpineConfig {
+    std::uint32_t block_size = 0; // trained block width: anchor + block_size-1 proposals
+    DSpineCodeBridge bridge;
+};
+
+enum class DraftBackend { DFlash, DFlash2, DSpine };
+
 struct DraftConfig {
     AttentionConfig attention;
     std::uint32_t intermediate_size       = 0;
@@ -136,6 +154,7 @@ struct DraftConfig {
     std::vector<std::uint32_t> target_layer_ids;
     std::uint32_t mask_token_id = 0;
     std::optional<DFlash2Config> dflash2;
+    std::optional<DSpineConfig> dspine;
 
     [[nodiscard]] std::uint32_t local_layer_count() const noexcept {
         return static_cast<std::uint32_t>(std::count(layer_types.begin(), layer_types.end(),

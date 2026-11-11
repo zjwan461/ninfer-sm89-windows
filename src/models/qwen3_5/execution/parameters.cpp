@@ -278,6 +278,10 @@ public:
                         result.attention_conv = convolution(*layer.attention_conv);
                     }
                     if (layer.mlp_conv) { result.mlp_conv = convolution(*layer.mlp_conv); }
+                    if (layer.bridge) {
+                        result.bridge = DraftBridgeParameters{tensor(layer.bridge->read),
+                                                              tensor(layer.bridge->write)};
+                    }
                     return result;
                 }));
         }
@@ -285,6 +289,12 @@ public:
             out.selector = SelectorParameters{linear(w.selector->hidden_projection),
                                               tensor(w.selector->predecessor_codebook),
                                               tensor(w.selector->successor_codebook)};
+        }
+        if (w.dspine) {
+            const auto& bridge = *w.dspine;
+            out.dspine         = DSpineBridgeParameters{
+                tensor(bridge.codebook), tensor(bridge.gate), tensor(bridge.gate_bias),
+                tensor(bridge.predecessor), tensor(bridge.value), tensor(bridge.final_read)};
         }
         return out;
     }

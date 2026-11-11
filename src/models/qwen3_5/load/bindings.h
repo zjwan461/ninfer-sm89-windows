@@ -59,6 +59,8 @@ private:
                                       const std::string& component);
 void bind_dflash2(Bindings& bindings, DraftWeights& weights, const DraftConfig& config,
                   const TextConfig& target);
+void bind_dspine(Bindings& bindings, DraftWeights& weights, const DraftConfig& config,
+                 const TextConfig& target);
 // Every ternary (T2/T5) binding must be a weight listed in prism_hadamard (rotated_inputs, or
 // the embedding under embedding_inverse), every listed weight must be ternary with a sign
 // vector of its input width, and every use of a T5 weight must admit A8 (T5 has no A16 route).

@@ -15,6 +15,7 @@ namespace ninfer::product {
     if (value == "mtp") { return SpeculativeBackend::Mtp; }
     if (value == "dflash") { return SpeculativeBackend::DFlash; }
     if (value == "dflash2") { return SpeculativeBackend::DFlash2; }
+    if (value == "dspine") { return SpeculativeBackend::DSpine; }
     throw std::invalid_argument("invalid speculative backend: " + std::string(value));
 }
 
@@ -28,6 +29,8 @@ namespace ninfer::product {
         return "dflash";
     case SpeculativeBackend::DFlash2:
         return "dflash2";
+    case SpeculativeBackend::DSpine:
+        return "dspine";
     }
     return "unknown";
 }
@@ -115,7 +118,7 @@ inline void validate_speculative_cli_options(const SpeculativeOptions& options) 
     case SpeculativeBackend::None:
         if (options.draft_tokens != 0 || options.proposal_head != ProposalHead::Full) {
             throw std::invalid_argument(
-                "--draft-tokens and --lm-head-draft require --spec mtp|dflash|dflash2");
+                "--draft-tokens and --lm-head-draft require --spec mtp|dflash|dflash2|dspine");
         }
         return;
     case SpeculativeBackend::Mtp:
@@ -131,6 +134,17 @@ inline void validate_speculative_cli_options(const SpeculativeOptions& options) 
     case SpeculativeBackend::DFlash2:
         if (options.draft_tokens == 0 || options.draft_tokens > 15) {
             throw std::invalid_argument("--spec dflash2 requires --draft-tokens in [1,15]");
+        }
+        return;
+    case SpeculativeBackend::DSpine:
+        if (options.draft_tokens == 0 || options.draft_tokens > 15) {
+            throw std::invalid_argument("--spec dspine requires --draft-tokens in [1,15]");
+        }
+        // The DSpine refinement compares the sixteen full-vocabulary candidates; a 131072-row
+        // shortlist changes that candidate set and shortens the accepted prefix.
+        if (options.proposal_head != ProposalHead::Full) {
+            throw std::invalid_argument("--spec dspine requires the full proposal head (no "
+                                        "--lm-head-draft)");
         }
         return;
     }

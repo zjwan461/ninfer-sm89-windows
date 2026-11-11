@@ -37,7 +37,7 @@ def test_store_roundtrip(tmp_path: Path) -> None:
 def test_import_presets_is_idempotent(tmp_path: Path) -> None:
     store = _store(tmp_path)
     added = store.import_presets()
-    assert len(added) == 4
+    assert added
     names = {profile["name"] for profile in store.list_profiles()}
     assert "Qwen3.8-27B int8 · 4080s" in names
     assert all(profile["builtin"] for profile in store.list_profiles())
@@ -45,7 +45,7 @@ def test_import_presets_is_idempotent(tmp_path: Path) -> None:
     assert store.last_profile == "Qwen3.8-27B int8 · 4080s"
 
     assert store.import_presets() == []
-    assert len(store.list_profiles()) == 4
+    assert len(store.list_profiles()) == len(added)
 
 
 def test_import_presets_keeps_active_profile(tmp_path: Path) -> None:
@@ -93,3 +93,33 @@ def test_render_bat_escapes_percent(tmp_path: Path) -> None:
     values["artifact"] = "C:\\models\\100%\\m.ninfer"
     text = render_bat("pct", values)
     assert "100%%" in text
+
+
+def test_spec_choices_carry_panel_guidance() -> None:
+    """面板对每个 --spec 选项都要能显示名称、说明和建议草稿数。"""
+
+    field = config.FIELD_BY_KEY["spec"]
+    assert set(field.choice_info or {}) == set(config.SPECS)
+    for choice in config.SPECS:
+        info = (field.choice_info or {})[choice]
+        assert info.get("label"), f"--spec {choice} has no display label"
+        assert info.get("note"), f"--spec {choice} has no guidance note"
+        assert 1 <= int(info["draft_tokens"]) <= 15
+    # DSpine 必须声明全词表 head 的限制，否则面板会允许 --lm-head-draft。
+    assert "lm-head-draft" in (field.choice_info or {})["dspine"]["note"]
+
+
+def test_import_presets_restores_a_deleted_builtin(tmp_path: Path) -> None:
+    """启动时补齐内置预设：删掉一个内置项后再导入，它必须回来（用户自建项不受影响）。"""
+
+    store = _store(tmp_path)
+    names = store.import_presets()
+    assert names
+    store.save_profile("my-own", config.default_values("C:\\x\\ninfer-serve.exe"))
+    victim = names[0]
+    assert store.delete_profile(victim) is True
+
+    restored = store.import_presets()
+    assert victim in restored
+    assert store.get_profile(victim) is not None
+    assert store.get_profile("my-own") is not None

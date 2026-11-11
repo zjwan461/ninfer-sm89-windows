@@ -117,11 +117,12 @@ cmake --build build -j
 
 `NINFER_TARGET_SM_COUNT` (default 128) sets the SM count the attention wave geometry
 (`src/ops/softmax_attention/dense/causal_cache/`) is compiled for. Leave it at 128 for the RTX
-4090 this project is tuned on; pass `80` for an RTX 4080 SUPER. It is not an architecture switch
-— the build stays `sm_89` — and either value is safe on either card: a mismatch only costs wave
-utilisation, never correctness. The value must be even and >= 66 (both head geometries derive
-their split cap from it). The `CMakePresets.json` `release-4080s` preset selects 80 and builds
-into `build-4080s`.
+4090 this project is tuned on; pass `80` for an RTX 4080 SUPER and `36` for an RTX 5060 Ti 16 GB.
+The CUDA architecture is selected separately by `CMAKE_CUDA_ARCHITECTURES` (`89` for Ada,
+`120a` for Blackwell consumer); the SM count and the architecture both have to match the
+card, and the architecture mismatch is rejected at startup. The value must be even and in
+[32, 128] (both head geometries derive their split cap from it). `CMakePresets.json` selects 80
+and `build-4080s` in `release-4080s`, and 36 / `sm_120a` / `build-5060ti` in `release-5060ti`.
 
 Products: `build/apps/ninfer.exe`, `build/apps/ninfer-serve.exe`,
 `build/apps/ninfer-perplexity.exe`. At runtime, put the vcpkg `bin` and CUDA `bin` on PATH.

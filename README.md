@@ -4,11 +4,13 @@
 > maintained at [zjwan461/ninfer-sm89-windows](https://github.com/zjwan461/ninfer-sm89-windows).
 > Measured on a 32 GB RTX 4080 SUPER as well: **[NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md)** -- decode 74.9 tok/s (MTP k=3), prefill 3.37k tok/s, 262144 context at 29.5 GB, and the finding that the 80-SM constant makes no measurable difference on that card.
 
-> The change relative to upstream: the target SM count is a build option, so one `sm_89` source
-> builds for the RTX 4090 (128 SMs) or the RTX 4080 SUPER (80 SMs).
+> The change relative to upstream: the target architecture and SM count are build options, so one
+> source builds for the RTX 4090 (`sm_89`, 128 SMs), the RTX 4080 SUPER (`sm_89`, 80 SMs) or the
+> RTX 5060 Ti 16 GB (`sm_120a`, 36 SMs).
 
-A C++20/CUDA inference engine specialized for **one NVIDIA `sm_89` card** -- RTX 4090 (128 SMs) or
-RTX 4080 SUPER (80 SMs), selected at build time with `NINFER_TARGET_SM_COUNT` -- built
+A C++20/CUDA inference engine specialized for **one NVIDIA card** -- RTX 4090 (`sm_89`, 128 SMs),
+RTX 4080 SUPER (`sm_89`, 80 SMs) or RTX 5060 Ti 16 GB (`sm_120a`, 36 SMs), selected at build time
+with `CMAKE_CUDA_ARCHITECTURES` and `NINFER_TARGET_SM_COUNT` -- built
 and run natively on **Windows 11** (MSVC + CUDA; no WSL, no Docker). It serves two 27B models of
 the same architecture through a CLI and an OpenAI- and Anthropic-compatible HTTP server:
 
@@ -22,7 +24,10 @@ the same architecture through a CLI and an OpenAI- and Anthropic-compatible HTTP
 The figures above are the RTX 4090 (128 SM) reference. The RTX 4080 SUPER (80 SM) profile is
 measured separately: see [Performance -> RTX 4080 SUPER](#rtx-4080-super-80-sms-32-gb) for the
 numbers and [NINFER_4080S_BASELINE.md](NINFER_4080S_BASELINE.md) for the per-op bandwidth data,
-the context/concurrency matrix and the two bugs found while measuring.
+the context/concurrency matrix and the two bugs found while measuring. The 16 GB RTX 5060 Ti
+(`sm_120a`, 36 SM) profile is measured in
+[NINFER_5060TI_BASELINE.md](NINFER_5060TI_BASELINE.md): 59.2 tok/s decode without speculation and
+111.5 tok/s with MTP k=2 at 8192 context, 131072 x 2 lanes at 8.88 GiB planned.
 
 The two Qwen3.8-27B files hold the same weights, byte for byte; the int8-prefill file lets prompt
 processing run on int8 tensor cores (1.7-1.9x faster, same decode, same quality within noise).
@@ -36,6 +41,34 @@ problems (three seeds each, 18/18 correct for both), mostly by cutting the longe
 decode was slightly faster (129.8 against 121.8 tok/s) thanks to higher MTP acceptance
 ([WINDOWS_PORT.md](WINDOWS_PORT.md#sampled-comparison-swift-15-against-base-2026-09-26)). Its
 license limits commercial use above a revenue threshold; see the model card.
+
+### DSpine draft model
+
+`--spec dspine` adds a fourth draft backend next to `mtp`, `dflash` and `dflash2`: a
+five-layer DSpine draft with a 16-token block, an 8192-token sliding window, a per-layer code bridge
+and a serial last-write refinement. It converts each layer's residual stream into a 1024-entry code
+so later block rows see the predecessor message, then re-scores the sixteen full-vocabulary
+candidates with the exact head before walking a greedy or sampled chain.
+
+On the RTX 4080 SUPER with the int8 artifact (greedy, thinking off, `rk4v4-e8`, CUDA Graphs on,
+one prompt per run):
+
+| Prompt | DSpine `--draft-tokens 15` | DFlash2 `--draft-tokens 8` | DFlash2 `--draft-tokens 15` |
+|---|---:|---:|---:|
+| merge-sorted function | **10.60 tok/round, 233 tok/s** | 7.95 | 10.53 |
+| HumanEval-style completion | 9.15 | 7.93 | 10.82 |
+| grade-school word problem | 5.54 | 5.54 | 6.54 |
+
+`--draft-tokens 15` is the same block the checkpoint was trained for (16 rows: one anchor plus
+fifteen drafts). At equal draft width the two drafts are close; the published comparison point
+(DSpine 16 against DFlash2 8) is where DSpine pulls ahead, matching the direction of the upstream
+table. The DSpine component is about 1.8 GiB of weights (the artifact is 19.22 GiB against 19.03 GiB
+for the DFlash2 one, which carries a 1.6 GiB DFlash2 draft instead), and it reuses the target head,
+so no extra head copy is loaded.
+
+Artifact: [zjwan461/Qwen3.8-27B-DSpine-int8-ninfer](https://huggingface.co/zjwan461/Qwen3.8-27B-DSpine-int8-ninfer).
+Bridge rounding contract, refinement formula, deliberate deviations and the host-oracle results:
+[docs/maintainer/dspine.md](docs/maintainer/dspine.md).
 
 Every figure in this README was measured on the same RTX 4090 under Windows unless it says
 otherwise; the conditions are next to each table. The RTX 4080 SUPER subsection under
@@ -61,7 +94,7 @@ not part of that budget.
 
 | | |
 |---|---|
-| GPU | NVIDIA GeForce RTX 4090 (128 SMs, 24 GB) or RTX 4080 SUPER (80 SMs, 32 GB), `sm_89`. The build targets one `sm_89` card; set `NINFER_TARGET_SM_COUNT` to its SM count. |
+| GPU | NVIDIA GeForce RTX 4090 (`sm_89`, 128 SMs, 24 GB), RTX 4080 SUPER (`sm_89`, 80 SMs, 16/32 GB) or RTX 5060 Ti 16 GB (`sm_120a`, 36 SMs). The build targets one card: set `CMAKE_CUDA_ARCHITECTURES` to `89` or `120a` and `NINFER_TARGET_SM_COUNT` to its SM count. |
 | OS | Windows 11 x64 |
 | Toolchain | Visual Studio Build Tools with MSVC (2026 validated), CUDA 12.8 or newer (13.4 validated), CMake 3.28+, Ninja |
 | Libraries | [vcpkg](https://github.com/microsoft/vcpkg) (`curl`, `ffmpeg`, `pkgconf`, installed from the manifest) |
@@ -335,12 +368,14 @@ flags above (three lanes, sampling and thinking defaults), one request at a time
 
 ## Choosing settings
 
-**Speculation.** Every drafted token is verified by the model, so the output distribution does
-not change; only the speed does.
+**Speculation.** Four backends are available -- `--spec mtp`, `dflash`, `dflash2` and `dspine` --
+plus the `--ngram chain` extension. Every drafted token is verified by the model, so the output
+distribution does not change; only the speed does.
 
 | Model | Recommended | When to change |
 |---|---|---|
 | Bonsai | `--spec mtp --draft-tokens 2 --lm-head-draft --ngram chain` | `--draft-tokens 3` is up to 18 % faster on code and math and about 10 % slower on prose |
+| Qwen3.8 (DSpine) | `--spec dspine --draft-tokens 15` | `--draft-tokens 7` halves the draft work (6.6 against 10.6 accepted tokens per round); `--lm-head-draft` is rejected because the refinement scores the full-vocabulary candidates |
 | Qwen3.8 | `--spec mtp --draft-tokens 3 --lm-head-draft --ngram chain` | `--spec dflash2 --draft-tokens 6` is faster on free-form prose (99 against 85 tok/s through the server); `--draft-tokens 12` peaks at 211 tok/s on code. DFlash2 loads 1.6 GiB more weights; with three lanes, `--no-cuda-graph` frees about 1.1 GiB of graph memory for about 4 % of decode speed |
 
 `--ngram chain` extends each MTP proposal with text copied from the context, so rounds that
@@ -351,7 +386,8 @@ CUDA graphs (about 2.5 % of the KV pool) and changes nothing on text with nothin
 On the **RTX 4080 SUPER** this table still holds, with two caveats measured there: `--draft-tokens 3`
 is confirmed as the optimum for Qwen3.8 (74.9 tok/s on prose, 86.6 on code, against 64.6 / 63.7 at
 k=5), and the context/lane pairing is `262144 / 2` instead of three lanes because 262144 x 3 does
-not fit 32 GB. DFlash2 and the n-gram variants were not measured on that card.
+not fit 32 GB. DFlash2 and the n-gram variants were not measured on that card; DSpine is (233
+tok/s and 10.60 accepted tokens per round on code, see [above](#dspine-draft-model)).
 
 **KV cache.**
 
@@ -571,7 +607,10 @@ The full protocol reference, including every field and error code, is in
 - Long-context decode slows with depth: a Bonsai MTP round costs 18.5-20.8 ms at 128K against
   12.8 ms at short context, all of it in attention.
 - DFlash2 is not supported with Bonsai's ternary output head; use MTP.
-- NVFP4/W4A4 execution needs Blackwell tensor cores and is unavailable on `sm_89`.
+- NVFP4/W4A4 execution needs Blackwell tensor cores and is unavailable on `sm_89`. In MSVC
+  builds it is also disabled on `sm_120a`: MSVC cannot pass the 128-byte-aligned `CUtensorMap`
+  kernel parameter (C2719), so the W4A4 TMA launchers are excluded
+  (`NINFER_BUILD_NVFP4_TMA=OFF`) and A4 artifacts fall back to A16 activations.
 - This branch is developed and validated on Windows. The Linux build and `Dockerfile` are
   inherited from the upstream 4090 port and are not re-validated here; see
   [docs/rtx-3090-linux.md](docs/rtx-3090-linux.md) with `CMAKE_CUDA_ARCHITECTURES=89`.

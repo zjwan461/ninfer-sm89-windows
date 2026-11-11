@@ -1,8 +1,8 @@
 # NInfer documentation
 
 Start with the [project README](../README.md) to download the prebuilt Windows binaries or build
-NInfer, download a model, and run the CLI or HTTP server. This fork targets one NVIDIA `sm_89`
-card (RTX 4090 or RTX 4080 SUPER) on native Windows.
+NInfer, download a model, and run the CLI or HTTP server. This fork targets one NVIDIA card at a
+time on native Windows: `sm_89` (RTX 4090 or RTX 4080 SUPER) or `sm_120a` (RTX 5060 Ti 16 GB).
 
 ## User guides
 
@@ -68,6 +68,7 @@ other references own narrower contracts:
 | [Storage layouts](maintainer/storage-layouts.md) | packing, plane offsets, padding, encoded sizes and view addressing |
 | [Qwen3.5 model](maintainer/qwen3_5-model.md) | Dense/MoE mathematics, instance config, logical parameters, MTP, Vision and state semantics |
 | [DFlash and DFlash2](maintainer/dflash.md) | conditioning, masked draft computation, proposal distributions and backend state |
+| [DSpine draft](maintainer/dspine.md) | code-bridge rounding contract, block-causal draft block, last-write refinement and backend state |
 | [Resource scheduling and context cache](maintainer/resource-scheduling-and-context-cache.md) | candidate selection, retention, materialization and Device/Host checkpoint policy |
 | [Paged KV context store](maintainer/paged-kv-cache.md) | typed pools, pages, replicas, address spaces, reservations and consumer views |
 | [ReplaySSM GDN](maintainer/replayssm-gdn.md) | raw transition records and faithful commitment of the verified state prefix |

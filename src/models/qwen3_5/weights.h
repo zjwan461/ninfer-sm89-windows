@@ -106,21 +106,35 @@ struct DynamicConvWeights {
     WeightId base_kernel, kernel_projection;
 };
 
+// DSpine's per-layer code-bridge read (hidden -> codes) and write (message -> residual delta).
+struct DraftBridgeWeights {
+    WeightId read, write;
+};
+
 struct DraftBlockWeights {
     WeightId input_norm, post_attention_norm;
     DraftAttentionWeights attention;
     DenseWeights mlp;
     std::optional<DynamicConvWeights> attention_conv, mlp_conv;
+    std::optional<DraftBridgeWeights> bridge;
 };
 
 struct SelectorWeights {
     WeightId hidden_projection, predecessor_codebook, successor_codebook;
 };
 
+// The bridge tensors shared by every write and by the last-write refinement.
+struct DSpineBridgeWeights {
+    WeightId codebook;
+    WeightId gate, gate_bias, predecessor, value;
+    WeightId final_read;
+};
+
 struct DraftWeights {
     WeightId feature_projection, context_norm, final_norm;
     std::vector<DraftBlockWeights> layers;
     std::optional<SelectorWeights> selector;
+    std::optional<DSpineBridgeWeights> dspine;
     WeightId token_embedding, output_head;
     WeightUseId output_head_use;
 };

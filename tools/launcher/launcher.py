@@ -90,10 +90,10 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
         manager.bind_loop(loop)
         gpu.start()
         # 首次运行：导入内置预设。
-        if not store.list_profiles():
-            added = store.import_presets()
-            if added:
-                logbus.append(f"已导入 {len(added)} 个内置预设", "launcher")
+        # 每次启动补齐新增的内置预设；同名条目不会被覆盖，用户改动保留。
+        added = store.import_presets()
+        if added:
+            logbus.append(f"已导入 {len(added)} 个内置预设", "launcher")
 
         last = store.settings.get("last_values") or {}
         host = str(last.get("host") or "127.0.0.1")

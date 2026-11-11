@@ -42,6 +42,10 @@ WeightId Bindings::parameter(std::string name, artifact::Shape shape,
             // sm_89 has no FP4 tensor cores; an artifact baked with AllowA4 (nvfp4) still needs
             // to run its activations at A16 on this build regardless of what it declares.
             result.policy = ops::LinearPolicy::A16Only;
+#elif defined(NINFER_NO_NVFP4_TMA)
+            // This Windows/MSVC build drops the W4A4 TMA launchers (C2719); keep AllowA4
+            // artifacts loadable by running their activations at A16.
+            result.policy = ops::LinearPolicy::A16Only;
 #else
             result.policy = ops::LinearPolicy::AllowA4;
 #endif

@@ -72,7 +72,7 @@ def add_proposal(
     head = gather_source(source, ids)
     inputs = tuple(
         component + "/final_hidden"
-        for component in ("mtp", "dflash", "dflash2")
+        for component in ("mtp", "dflash", "dflash2", "dspine")
         if component in model.components
     )
     model.components["text"]["proposal"] = {"domain": "indexed", "rows": rows}

@@ -23,17 +23,19 @@ int device_sm_count();
 // __device__ launch policies cannot query the runtime, and the host launcher that must
 // reproduce such a policy exactly has to agree with it at compile time; those two sites use
 // this constant, every other site uses device_sm_count(). The top-level CMakeLists.txt
-// enforces CMAKE_CUDA_ARCHITECTURES=89, so this is not an architecture switch -- only the SM
-// count of one sm_89 card is configurable, because the attention wave geometry that consumes
-// this value must match the card the build runs on. CMake's NINFER_TARGET_SM_COUNT drives the
-// macro below (default 128).
+// enforces one of two architectures per build tree (sm_89 or sm_120a), so this is not an
+// architecture switch -- only the SM count of one card is configurable, because the attention
+// wave geometry that consumes this value must match the card the build runs on. CMake's
+// NINFER_TARGET_SM_COUNT drives the macro below (default 128).
 #ifndef NINFER_TARGET_SM_COUNT
 #define NINFER_TARGET_SM_COUNT 128
 #endif
-// Valid domain (enforced by ops/softmax_attention/dense/causal_cache/geometry.cuh): even and
-// >= 66, so both head geometries can stage the full 262144 keys.
+// Valid domain (enforced by CMakeLists.txt and ops/softmax_attention/dense/causal_cache/
+// geometry.cuh): even and in [32, 128]; the split cap is derived from the 262144-key capacity, so
+// every count in that domain stages the full context.
 //   128 -> NVIDIA GeForce RTX 4090 (sm_89)
 //    80 -> NVIDIA GeForce RTX 4080 SUPER (sm_89)
+//    36 -> NVIDIA GeForce RTX 5060 Ti 16 GB (sm_120a)
 inline constexpr int kTargetSmCount = NINFER_TARGET_SM_COUNT;
 
 // Stream-ordered copy of `bytes` from `source` to `destination` by a kernel rather than a

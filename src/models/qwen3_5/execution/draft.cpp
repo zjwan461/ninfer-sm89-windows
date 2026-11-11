@@ -7,6 +7,7 @@
 
 #include "core/nvtx.h"
 #include "ninfer/ops/argmax.h"
+#include "ninfer/ops/dspine.h"
 #include "ninfer/ops/dynamic_grouped_conv.h"
 #include "ninfer/ops/context_kv_materialize.h"
 #include "ninfer/ops/rmsnorm_rope.h"
@@ -324,6 +325,7 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
                      dimension(config.attention.num_key_value_heads)},
                     dimension(config.sliding_window.value_or(0)),
                     static_cast<float>(1.0 / std::sqrt(double(config.attention.head_dim))),
+                    ops::SlidingWindowMask::ContextWindow,
                     state.dflash.local_layer(static_cast<std::uint32_t>(layer_index)),
                     envelopes.local, work, attention, stream);
                 finish_dynamic_branch(
@@ -384,9 +386,145 @@ void propose_dflash2_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState
     }
 }
 
+void propose_dspine_batch(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& frame, int batch,
+                          int k, DFlashEnvelopes envelopes) {
+    const auto& target = state.execution.parameters.model.config().text;
+    const auto& config = *state.execution.parameters.model.config().draft;
+    const auto& weights = *state.execution.parameters.draft;
+    if (!config.dspine || !weights.dspine) {
+        throw std::logic_error("DSpine proposal requires the code-bridge weights");
+    }
+    const auto& dspine = *config.dspine;
+    const auto& bridge = *weights.dspine;
+    if (config.rms_norm_eps != 1e-6F || config.rope_theta != 1e7F) {
+        throw std::invalid_argument(
+            "DSpine: fused norm/RoPE requires epsilon=1e-6 and theta=1e7");
+    }
+
+    const int width                = k + 1;
+    const int columns              = width * batch;
+    auto& work                     = state.execution.work;
+    const cudaStream_t stream      = state.execution.device.stream;
+    const std::int32_t hidden      = dimension(target.hidden_size);
+    Tensor anchors                 = frame.anchors.slice(0, 0, batch);
+    Tensor frontiers               = frame.execution_frontiers.slice(0, 0, batch);
+    Tensor valid_columns           = frame.proposal_valid_columns.slice(0, 0, batch);
+    Tensor state_slots             = frame.state_destination_slots.slice(0, 0, batch);
+    Tensor ids                     = frame.proposal_ids.slice(1, 0, batch);
+    Tensor positions               = frame.proposal_positions.slice(1, 0, batch);
+    const float sqrt_code          = std::sqrt(static_cast<float>(dspine.bridge.code_size));
+    work.reset();
+    ops::prepare_masked_block(anchors, frontiers, valid_columns,
+                              dimension(config.mask_token_id), ids, positions, stream);
+
+    auto roots = workspace::dspine_round(work, target, config, width, batch);
+    Tensor current          = roots.residual_a;
+    Tensor upcoming         = roots.residual_b;
+    Tensor embedding_target = current.view({hidden, columns});
+    ops::embedding(ids.view({columns}), state.execution.parameters.text.token_embedding,
+                   embedding_target, stream);
+    Tensor layer_input_flat = roots.layer_input.view({hidden, columns});
+    ops::rmsnorm(current, weights.layers.front().input_norm, config.rms_norm_eps, false,
+                 roots.layer_input, stream);
+    Tensor raw = current;
+    for (std::size_t layer_index = 0; layer_index < weights.layers.size(); ++layer_index) {
+        const auto& layer = weights.layers[layer_index];
+        nvtx::ScopedRange layer_range(nvtx::Name::DFlashLayer, nvtx::Category::DFlash,
+                                      layer_index);
+        {
+            auto scope         = work.scope();
+            auto attention     = workspace::dspine_attention(work, target, config, columns);
+            Tensor query_flat  = attention.query.view(
+                {dimension(config.attention.query_width()), columns});
+            Tensor key_flat =
+                attention.key.view({dimension(config.attention.key_width()), columns});
+            Tensor value_flat =
+                attention.value.view({dimension(config.attention.key_width()), columns});
+            ops::attn_input_proj(layer_input_flat, layer.query_key_value.weight, query_flat,
+                                 key_flat, value_flat, stream);
+            Tensor query4 = attention.query.view({dimension(config.attention.head_dim),
+                                                  dimension(config.attention.num_attention_heads),
+                                                  width, batch});
+            Tensor key4   = attention.key.view({dimension(config.attention.head_dim),
+                                                dimension(config.attention.num_key_value_heads),
+                                                width, batch});
+            Tensor value4 = attention.value.view({dimension(config.attention.head_dim),
+                                                  dimension(config.attention.num_key_value_heads),
+                                                  width, batch});
+            Tensor attention4 =
+                attention.attention.view({dimension(config.attention.head_dim),
+                                          dimension(config.attention.num_attention_heads), width,
+                                          batch});
+            ops::rmsnorm_rope(positions, layer.query_norm, layer.key_norm, query4, key4, stream);
+            ops::sliding_window_attention(
+                query4, key4, value4, positions, valid_columns, state_slots,
+                {dimension(config.attention.head_dim),
+                 dimension(config.attention.num_attention_heads),
+                 dimension(config.attention.num_key_value_heads)},
+                dimension(config.sliding_window.value_or(0)),
+                static_cast<float>(1.0 / std::sqrt(double(config.attention.head_dim))),
+                ops::SlidingWindowMask::BlockCausal,
+                dflash_state(state).local_layer(static_cast<std::uint32_t>(layer_index)),
+                envelopes.local, work, attention4, stream);
+            Tensor residual_flat = current.view({hidden, columns});
+            project_add(attention4.view({dimension(config.attention.query_width()), columns}),
+                        layer.output, residual_flat, work, stream);
+        }
+        {
+            auto scope           = work.scope();
+            auto mlp             = workspace::dflash_mlp(work, target, config, columns);
+            Tensor residual_flat = current.view({hidden, columns});
+            ops::rmsnorm(residual_flat, layer.post_attention_norm, config.rms_norm_eps, false,
+                         mlp.hidden, stream);
+            project_swiglu(mlp.hidden, layer.mlp.gate_up, mlp.intermediate, work, stream);
+            project_add(mlp.intermediate, layer.mlp.down, residual_flat, work, stream);
+        }
+        if (!layer.bridge) {
+            throw std::logic_error("DSpine draft layer has no code bridge");
+        }
+        ops::dspine_bridge_read(current, layer.bridge->read, bridge.codebook, bridge.gate,
+                                bridge.predecessor, bridge.value, anchors, width, sqrt_code,
+                                dspine.bridge.eps, roots.read_q, roots.projected, roots.codes,
+                                roots.rms, roots.packed, stream);
+        const bool last = layer_index + 1 == weights.layers.size();
+        Tensor next_norm = last ? weights.final_norm : weights.layers[layer_index + 1].input_norm;
+        Tensor tail      = last ? roots.proposal_hidden : Tensor{};
+        ops::dspine_bridge_write(current, roots.rms, roots.packed, bridge.gate_bias,
+                                 layer.bridge->write, next_norm, width, config.rms_norm_eps,
+                                 roots.message, upcoming, roots.layer_input, tail, stream);
+        raw      = current;
+        current  = upcoming;
+        upcoming = raw;
+    }
+
+    const std::int32_t token_domain =
+        dimension(state.execution.parameters.model.resources().public_token_count);
+    // The proposal candidates land in the persistent frame: the verifier reads the same
+    // candidate sets that the refinement scored.
+    Tensor candidate_sets = frame.candidate_ids.slice(2, 0, batch);
+    Tensor candidate_flat = candidate_sets.view({ops::kDSpineCandidates, k * batch});
+    Tensor candidate_scores = roots.candidate_scores;
+    ops::linear_topk(roots.proposal_hidden, weights.output_head.weight, token_domain,
+                     candidate_flat, candidate_scores, work, stream);
+    ops::dspine_refine_score(raw, roots.rms, roots.packed, candidate_flat, anchors,
+                             bridge.codebook, bridge.gate_bias, bridge.predecessor, bridge.value,
+                             weights.layers.back().bridge->write, weights.final_norm,
+                             weights.output_head.weight, token_domain, width, sqrt_code,
+                             dspine.bridge.eps, roots.refine, stream);
+    Tensor drafts     = frame.draft_tokens.slice(1, 0, batch);
+    Tensor proposal_q = frame.proposal_q.slice(2, 0, batch);
+    ops::dspine_refine_chain(roots.refine.table, candidate_flat, frame.sampling, frontiers,
+                             width, drafts, proposal_q, stream);
+    work.reset();
+}
+
 void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& frame,
                         std::int32_t batch_size, std::uint32_t k, DFlashEnvelopes envelopes) {
-    if (state.execution.parameters.model.config().draft->dflash2) {
+    if (state.execution.parameters.model.config().draft->dspine) {
+        nvtx::ScopedRange proposal_range(nvtx::Name::DFlashProposal, nvtx::Category::DFlash,
+                                         static_cast<std::uint64_t>(k + 1U) * batch_size);
+        propose_dspine_batch(state, frame, batch_size, k, envelopes);
+    } else if (state.execution.parameters.model.config().draft->dflash2) {
         nvtx::ScopedRange proposal_range(nvtx::Name::DFlashProposal, nvtx::Category::DFlash,
                                          static_cast<std::uint64_t>(k + 1U) * batch_size);
         propose_dflash2_batch(state, frame, batch_size, k, envelopes);
@@ -477,6 +615,7 @@ void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& f
                          dimension(config.attention.num_key_value_heads)},
                         dimension(config.sliding_window.value_or(0)),
                         static_cast<float>(1.0 / std::sqrt(double(config.attention.head_dim))),
+                        ops::SlidingWindowMask::ContextWindow,
                         dflash_state(state).local_layer(config.compact_layer_index(layer)),
                         envelopes.local, state.execution.work, attention_batch,
                         state.execution.device.stream);

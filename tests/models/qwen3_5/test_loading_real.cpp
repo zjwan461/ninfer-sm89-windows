@@ -32,8 +32,7 @@ void check_selection(const qwen::LoadPlan& plan, const LoadOptions& options) {
             "Vision demand differs from startup selection");
     require(weights.mtp.has_value() == (options.speculative == SpeculativeBackend::Mtp),
             "MTP selection differs");
-    require(weights.draft.has_value() == (options.speculative == SpeculativeBackend::DFlash ||
-                                          options.speculative == SpeculativeBackend::DFlash2),
+    require(weights.draft.has_value() == is_masked_draft_backend(options.speculative),
             "draft selection differs");
     require(weights.proposal.has_value() == options.proposal_enabled(),
             "proposal selection differs");
@@ -156,6 +155,11 @@ void check_native_inputs(const qwen::Model& model) {
             dense(layer.mlp);
             if (layer.attention_conv) { (void)linear(layer.attention_conv->kernel_projection); }
             if (layer.mlp_conv) { (void)linear(layer.mlp_conv->kernel_projection); }
+            // DSpine's bridge is stored BF16; binding is all the loader does for it.
+            if (layer.bridge) {
+                (void)model.weight(layer.bridge->read);
+                (void)model.weight(layer.bridge->write);
+            }
         }
         if (draft.selector) { (void)linear(draft.selector->hidden_projection); }
         (void)ops::prepare_linear_weight(model.input(draft.output_head_use));
@@ -198,6 +202,8 @@ int main(int argc, char** argv) {
                     options.speculative = SpeculativeBackend::DFlash;
                 } else if (backend == "dflash2") {
                     options.speculative = SpeculativeBackend::DFlash2;
+                } else if (backend == "dspine") {
+                    options.speculative = SpeculativeBackend::DSpine;
                 } else {
                     throw std::invalid_argument("unknown speculative backend");
                 }
@@ -211,7 +217,9 @@ int main(int argc, char** argv) {
                     throw std::invalid_argument("unknown proposal head");
                 }
             } else if (arg == "--help") {
-                std::cout << "--artifact PATH [--vision] [--speculative none|mtp|dflash|dflash2]\n"
+                std::cout
+                    << "--artifact PATH [--vision] "
+                       "[--speculative none|mtp|dflash|dflash2|dspine]\n"
                              "[--proposal full|optimized] [--host-only] [--scoring]\n";
                 return 0;
             } else {

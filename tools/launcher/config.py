@@ -9,7 +9,7 @@
 - ``validate``：语义校验，返回 (errors, warnings)；
 - ``build_argv``：把参数字典变成 ``ninfer-serve.exe`` 的完整 argv；
 - ``Store``：profile / 设置的持久化；
-- ``builtin_presets``：仓库四个 ``start-*.bat`` 的等价档案。
+- ``builtin_presets``：仓库 ``start-*.bat`` 的等价档案（三张卡五个组合）。
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "filename": "bonsai2_27b_vl_mtp_q4q5.ninfer",
         "size_gib": 6.4,
         "preset": "Bonsai2-27B VL · 4080s",
-        "note": "Q4/Q5 三元权重 + vision + MTP；只支持 --spec mtp（可直接用内置预设）",
+        "note": "Q4/Q5 三元权重 + vision + MTP；只支持 --spec mtp（24/32 GB 用 4080s/4090 预设，16 GB 的 5060 Ti 用 5060Ti 预设）",
     },
     {
         "label": "Qwen3.8-27B int8 prefill（推荐）",
@@ -55,6 +55,23 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "size_gib": 19.03,
         "preset": "Qwen3.8-27B int8 · 4080s",
         "note": "Q4/Q5 权重 + int8 prefill，带 MTP 与 DFlash2（可直接用内置预设）",
+    },
+    {
+        "label": "Qwen3.8-27B + DSpine int8（社区构建）",
+        "repo": "zjwan461/Qwen3.8-27B-DSpine-int8-ninfer",
+        "filename": "qwen3_8_27b_dspine.ninfer",
+        "size_gib": 19.22,
+        "preset": "Qwen3.8-27B int8 + DSpine · 4080s",
+        "note": "int8 权重 + MTP + DSpine 草稿（--spec dspine --draft-tokens 15）；"
+                "需要含 dspine Ops 的引擎构建（feat/dspine-draft）",
+    },
+    {
+        "label": "Qwen3.8-27B + DFlash2 int8（社区构建）",
+        "repo": "zjwan461/Qwen3.8-27B-DFlash2-int8-ninfer",
+        "filename": "qwen3_8_27b_a8.ninfer",
+        "size_gib": 19.03,
+        "preset": "Qwen3.8-27B int8 · 4080s",
+        "note": "与 DSpine 版同一套 text/vision/mtp 权重，带 MTP 与 DFlash2；可直接用内置预设",
     },
     {
         "label": "Qwen3.8-27B 官方产物（BF16 prefill）",
@@ -92,7 +109,7 @@ GROUPS: tuple[tuple[str, str], ...] = (
 )
 
 KV_DTYPES = ("bf16", "int8", "fp8", "nvfp4", "k8v4", "rk8v4", "rk4v4", "rk4v4-e8", "rk2v4-e8")
-SPECS = ("mtp", "dflash", "dflash2")
+SPECS = ("mtp", "dflash", "dflash2", "dspine")
 LOG_LEVELS = ("trace", "debug", "info", "warning", "error", "critical", "off")
 
 
@@ -115,6 +132,8 @@ class Field:
     placeholder: str = ""
     #: 条件显示：{"key": "<字段>", "values": [...]} 或 {"key": "<字段>", "nonempty": True}
     show_if: dict[str, Any] | None = None
+    #: enum 逐项说明：{"<choice>": {"label": 显示名, "note": 说明, "draft_tokens": 建议草稿数}}
+    choice_info: dict[str, dict[str, Any]] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -132,6 +151,7 @@ class Field:
             "allow_empty": self.allow_empty,
             "placeholder": self.placeholder,
             "show_if": self.show_if,
+            "choice_info": self.choice_info or {},
         }
 
 
@@ -139,7 +159,7 @@ FIELDS: tuple[Field, ...] = (
     # ---------------------------------------------------------------- 模型
     Field(
         "engine_binary", "model", "引擎（ninfer-serve.exe）", kind="path", default="",
-        help="启动的子进程；本机默认 build-4080s\\apps\\ninfer-serve.exe",
+        help="启动的子进程；留空时按 build → build-5060ti → build-4080s → build-4090 顺序探测本机产物",
     ),
     Field(
         "artifact", "model", "模型文件（.ninfer）", kind="path", default="",
@@ -193,11 +213,35 @@ FIELDS: tuple[Field, ...] = (
     Field(
         "prefill_chunk", "perf", "prefill 分块（--prefill-chunk）", kind="int",
         cli="--prefill-chunk", minimum=1,
-        placeholder="4080s 实测 1024；4090 用 1408",
+        placeholder="4080s 实测 1024；4090 用 1408；5060Ti 起步 768",
     ),
     Field(
         "spec", "perf", "投机解码后端（--spec）", kind="enum", cli="--spec", choices=SPECS,
         help="启动期固定；留空 = 不加载投机后端",
+        choice_info={
+            "mtp": {
+                "label": "MTP",
+                "note": "共享权重的单层提案头；建议草稿 2-3；可配 --lm-head-draft。",
+                "draft_tokens": 3,
+            },
+            "dflash": {
+                "label": "DFlash",
+                "note": "35B-A3B 的 DFlash 草稿；建议草稿 3-4；可配 --lm-head-draft。",
+                "draft_tokens": 4,
+            },
+            "dflash2": {
+                "label": "DFlash2",
+                "note": "Qwen3.8-27B 的 DFlash2 草稿；建议草稿 7（官方评测为 8 个草稿位）；"
+                        "可配 --lm-head-draft。",
+                "draft_tokens": 7,
+            },
+            "dspine": {
+                "label": "DSpine",
+                "note": "块大小 16 的 DSpine 草稿；建议草稿 15；必须用全词表 head"
+                        "（不支持 --lm-head-draft）；artifact 需含 dspine 组件。",
+                "draft_tokens": 15,
+            },
+        },
     ),
     Field(
         "draft_tokens", "perf", "草稿 token 数（--draft-tokens）", kind="int",
@@ -472,6 +516,7 @@ def default_engine_binary() -> str:
 
     candidates: list[Path] = [
         REPO_ROOT / "build" / "apps" / "ninfer-serve.exe",
+        REPO_ROOT / "build-5060ti" / "apps" / "ninfer-serve.exe",
         REPO_ROOT / "build-4080s" / "apps" / "ninfer-serve.exe",
         REPO_ROOT / "build-4090" / "apps" / "ninfer-serve.exe",
     ]
@@ -603,7 +648,9 @@ class ArtifactInfo:
 
     @property
     def speculative_backends(self) -> tuple[str, ...]:
-        return tuple(name for name in ("mtp", "dflash", "dflash2") if name in self.components)
+        return tuple(
+            name for name in ("mtp", "dflash", "dflash2", "dspine") if name in self.components
+        )
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -951,8 +998,10 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
     if spec:
         if draft is None:
             errors.append("使用 --spec 时必须填写 --draft-tokens")
-        elif spec == "dflash2" and not 1 <= draft <= 15:
-            errors.append("DFlash2 的 --draft-tokens 合法范围是 1–15")
+        elif spec in ("dflash2", "dspine") and not 1 <= draft <= 15:
+            errors.append(f"{spec} 的 --draft-tokens 合法范围是 1–15")
+        if spec == "dspine" and values.get("lm_head_draft"):
+            errors.append("DSpine 必须用全词表 head，不能配 --lm-head-draft")
     elif draft is not None:
         warnings.append("填写了 --draft-tokens 但未选择 --spec，该参数不会生效")
     if values.get("lm_head_draft") and not spec:
@@ -1013,21 +1062,30 @@ def validate(values: dict[str, Any]) -> tuple[list[str], list[str]]:
 
 
 def builtin_presets() -> list[dict[str, Any]]:
-    """仓库四个 ``start-*.bat`` 的等价档案（值逐字段对照脚本）。"""
+    """仓库 ``start-*.bat`` 的等价档案（值逐字段对照脚本；三张卡四个模型组合）。"""
 
     roots = default_models_roots()
     engine_4080s = str(REPO_ROOT / "build-4080s" / "apps" / "ninfer-serve.exe")
     engine_4090 = str(REPO_ROOT / "build-4090" / "apps" / "ninfer-serve.exe")
+    engine_5060ti = str(REPO_ROOT / "build-5060ti" / "apps" / "ninfer-serve.exe")
     if not Path(engine_4080s).is_file():
         engine_4080s = default_engine_binary()
     if not Path(engine_4090).is_file():
         engine_4090 = engine_4080s
+    if not Path(engine_5060ti).is_file():
+        engine_5060ti = default_engine_binary()
 
     qwen = resolve_artifact("qwen3_8_27b_a8.ninfer", roots)
     bonsai = resolve_artifact("bonsai2_27b_vl_mtp_q4q5.ninfer", roots)
+    dspine = resolve_artifact("qwen3_8_27b_a8_dspine.ninfer", roots)
     # 容器目录布局（<name>/<name>.ninfer）在 .bat 里是靠目录参数解析的，这里直接指向文件。
     qwen = qwen if qwen.lower().endswith(".ninfer") else str(Path(qwen) / "qwen3_8_27b_a8.ninfer")
     bonsai = bonsai if bonsai.lower().endswith(".ninfer") else str(Path(bonsai) / "bonsai2_27b_vl_mtp_q4q5.ninfer")
+    dspine = (
+        dspine
+        if dspine.lower().endswith(".ninfer")
+        else str(Path(dspine) / "qwen3_8_27b_a8_dspine.ninfer")
+    )
 
     base = {
         "kv_capacity": "auto",
@@ -1044,7 +1102,7 @@ def builtin_presets() -> list[dict[str, Any]]:
         values.update(overrides)
         return {"name": name, "values": values}
 
-    return [
+    presets = [
         profile(
             "Qwen3.8-27B int8 · 4080s", engine_4080s, qwen,
             model_id="qwen3.8-27b",
@@ -1085,6 +1143,8 @@ def builtin_presets() -> list[dict[str, Any]]:
             max_context=262144,
             max_concurrency=3,
             prefill_chunk=1024,
+            default_max_tokens=65536,
+            default_thinking_budget=32768,
             spec="mtp",
             draft_tokens=2,
             lm_head_draft=True,
@@ -1097,6 +1157,23 @@ def builtin_presets() -> list[dict[str, Any]]:
             max_context=262144,
             max_concurrency=3,
             prefill_chunk=1408,
+            default_max_tokens=65536,
+            default_thinking_budget=32768,
+            spec="mtp",
+            draft_tokens=2,
+            lm_head_draft=True,
+            ngram="chain",
+            vision=True,
+        ),
+        profile(
+            "Bonsai2-27B VL · 5060Ti", engine_5060ti, bonsai,
+            model_id="bonsai-27b",
+            max_context=131072,
+            max_concurrency=2,
+            prefill_chunk=768,
+            default_max_tokens=65536,
+            default_thinking_budget=32768,
+            host_kv_mib=2048,
             spec="mtp",
             draft_tokens=2,
             lm_head_draft=True,
@@ -1104,6 +1181,43 @@ def builtin_presets() -> list[dict[str, Any]]:
             vision=True,
         ),
     ]
+    if Path(dspine).is_file():
+        # DSpine 只换 draft：目标权重与上面的 int8 产物相同（新产物从旧产物导入）。
+        presets.append(
+            profile(
+                "Qwen3.8-27B int8 + DSpine · 4080s", engine_4080s, dspine,
+                model_id="qwen3.8-27b",
+                max_context=262144,
+                max_concurrency=2,
+                prefill_chunk=1024,
+                max_pending_requests=10,
+                pending_timeout_ms=600000,
+                spec="dspine",
+                draft_tokens=15,
+                preserve_thinking=True,
+                device_state_slots=3,
+                host_state_slots=4,
+                host_kv_mib=4096,
+            )
+        )
+        presets.append(
+            profile(
+                "Qwen3.8-27B int8 + DSpine · 4090", engine_4090, dspine,
+                model_id="qwen3.8-27b",
+                max_context=100000,
+                max_concurrency=3,
+                prefill_chunk=1408,
+                max_pending_requests=10,
+                pending_timeout_ms=600000,
+                spec="dspine",
+                draft_tokens=15,
+                preserve_thinking=True,
+                device_state_slots=3,
+                host_state_slots=4,
+                host_kv_mib=4096,
+            )
+        )
+    return presets
 
 
 # ---------------------------------------------------------------------- 存储

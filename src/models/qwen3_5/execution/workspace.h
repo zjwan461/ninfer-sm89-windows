@@ -5,6 +5,7 @@
 #include "core/arena.h"
 #include "core/layout.h"
 #include "models/qwen3_5/execution/parameters.h"
+#include "ninfer/ops/dspine.h"
 
 #include <cstdint>
 
@@ -308,6 +309,85 @@ DFlashMlpRoots dflash_mlp(Allocator& allocator, const TextConfig& target, const 
         matrix(allocator, DType::BF16, dimension(target.hidden_size), tokens),
         matrix(allocator, DType::BF16, dimension(config.intermediate_size), tokens),
     };
+}
+
+// DSpine draft-block attention. The layer input is the previous bridge write's normalized output,
+// so no separate hidden scratch is needed.
+struct DSpineAttentionRoots {
+    Tensor query;
+    Tensor key;
+    Tensor value;
+    Tensor attention;
+};
+
+template <class Allocator>
+DSpineAttentionRoots dspine_attention(Allocator& allocator, const TextConfig& target,
+                                      const DraftConfig& config, std::int32_t tokens) {
+    return {
+        matrix(allocator, DType::BF16, dimension(config.attention.query_width()), tokens),
+        matrix(allocator, DType::BF16, dimension(config.attention.key_width()), tokens),
+        matrix(allocator, DType::BF16, dimension(config.attention.key_width()), tokens),
+        matrix(allocator, DType::BF16, dimension(config.attention.query_width()), tokens),
+    };
+}
+
+// Everything the DSpine proposal phase allocates: two residual streams (the bridge write must keep
+// the pre-write raw stream), the per-layer bridge operands, and the refinement buffers.
+struct DSpineRoundRoots {
+    Tensor residual_a;
+    Tensor residual_b;
+    Tensor layer_input;
+    Tensor read_q;
+    Tensor projected;
+    Tensor codes;
+    Tensor rms;
+    Tensor packed;
+    Tensor message;
+    Tensor proposal_hidden;
+    Tensor candidate_scores;
+    ops::DSpineRefineBuffers refine;
+};
+
+template <class Allocator>
+DSpineRoundRoots dspine_round(Allocator& allocator, const TextConfig& target,
+                              const DraftConfig& config, std::int32_t width,
+                              std::int32_t batch) {
+    const auto& bridge = *config.dspine;
+    const std::int32_t columns  = width * batch;
+    const std::int32_t rows     = (width - 1) * batch;
+    const std::int32_t senders  = batch * (1 + (width - 2) * ops::kDSpineCandidates);
+    DSpineRoundRoots out;
+    // The bridge and refinement ops store a logical [rows,columns] matrix with the *column*
+    // contiguous (the DSpine kernels index `row*columns + column`), which is the Tensor
+    // {columns, rows}: the fastest extent is the column count.
+    const auto row_major = [&allocator](DType dtype, std::int32_t rows, std::int32_t columns) {
+        return allocator.alloc(dtype, {columns, rows});
+    };
+    out.residual_a = allocator.alloc(DType::BF16, {dimension(target.hidden_size), width, batch});
+    out.residual_b = allocator.alloc(DType::BF16, {dimension(target.hidden_size), width, batch});
+    out.layer_input = allocator.alloc(DType::BF16, {dimension(target.hidden_size), width, batch});
+    out.read_q     = matrix(allocator, DType::BF16, dimension(target.hidden_size), columns);
+    out.projected =
+        row_major(DType::FP32, dimension(bridge.bridge.code_size), columns);
+    out.codes = row_major(DType::BF16, dimension(bridge.bridge.code_size), columns);
+    out.rms   = vector(allocator, DType::FP32, columns);
+    out.packed = row_major(DType::BF16, dimension(3ULL * bridge.bridge.rank), columns);
+    out.message = row_major(DType::BF16, dimension(bridge.bridge.rank), columns);
+    out.proposal_hidden = matrix(allocator, DType::BF16, dimension(target.hidden_size), rows);
+    out.candidate_scores = matrix(allocator, DType::FP32, dimension(ops::kDSpineCandidates), rows);
+    out.refine.sender_codes = matrix(allocator, DType::BF16, dimension(bridge.bridge.code_size),
+                                     senders);
+    out.refine.sender_tsv   = matrix(allocator, DType::BF16, dimension(2ULL * bridge.bridge.rank),
+                                   senders);
+    out.refine.candidate_rows = matrix(
+        allocator, DType::BF16, dimension(target.hidden_size),
+        dimension(std::uint64_t(rows) * ops::kDSpineCandidates));
+    out.refine.candidate_tg = matrix(allocator, DType::BF16, dimension(bridge.bridge.rank),
+                                     dimension(std::uint64_t(rows) * ops::kDSpineCandidates));
+    out.refine.base  = matrix(allocator, DType::FP32, dimension(ops::kDSpineCandidates), rows);
+    out.refine.table = allocator.alloc(
+        DType::FP32, {dimension(ops::kDSpineCandidates * ops::kDSpineCandidates), rows});
+    return out;
 }
 
 } // namespace ninfer::models::qwen3_5::execution::workspace

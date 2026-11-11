@@ -30,6 +30,8 @@ constexpr int kLogicalPages       = 3;
 constexpr int kPhysicalPages      = 6;
 constexpr int kDFlash2Window      = 2048;
 constexpr int kDFlashWindow       = 4096;
+// The DSpine draft's native sliding window.
+constexpr int kDSpineWindow       = 8192;
 constexpr int kFullHeadDim        = 256;
 constexpr int kFullGroup          = 64;
 constexpr int kFullGroups         = kFullHeadDim / kFullGroup;
@@ -1430,6 +1432,11 @@ int main(int argc, char** argv) {
                          true, {}, kDFlash2Window, kDFlash2Window);
     failures += cyclic_graph_replay_case(kDFlashWindow, 16);
     failures += cyclic_graph_replay_case(kDFlash2Window, 8);
+    failures += cyclic_graph_replay_case(kDSpineWindow, 16);
+    failures += run_case(1, 0, kDSpineWindow - 1, true, {}, 0, kDSpineWindow);
+    failures += run_case(4, 3, 2 * kDSpineWindow - 3, true, {}, 0, kDSpineWindow);
+    failures += run_case(kDSpineWindow, kDSpineWindow, 3 * kDSpineWindow - kDSpineWindow / 4, true,
+                         {}, kDSpineWindow, kDSpineWindow);
     failures += paged_graph_replay_case();
     failures += batch_selector_case(true, kDFlashWindow);
     failures += batch_selector_case(false);

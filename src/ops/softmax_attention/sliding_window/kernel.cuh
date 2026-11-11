@@ -10,6 +10,7 @@ struct SlidingWindowAttentionPolicy {
     const std::int32_t* positions;
     int padded_context;
     int window_mask;
+    bool block_causal;
 
     __device__ __forceinline__ int context_count(int value) const { return min(value, window_mask); }
 
@@ -17,6 +18,12 @@ struct SlidingWindowAttentionPolicy {
 
     __device__ __forceinline__ bool allow_context(int query, int key) const {
         return key >= query - (window_mask);
+    }
+
+    // Query-tile visibility: DFlash masked drafts expose the whole block; a causal draft block
+    // exposes only the rows at or before the query row.
+    __device__ __forceinline__ bool allow_query(int query_token, int key_token) const {
+        return !block_causal || key_token <= query_token;
     }
 
     __device__ __forceinline__ std::int64_t context_tile(int kv_head, int, int) const {
@@ -41,7 +48,7 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__
         const std::int32_t* __restrict__ valid_columns, const std::int32_t* __restrict__ lanes,
         const __nv_bfloat16* __restrict__ context_k, const __half* __restrict__ context_v,
         int padded_context, int window_mask, int max_context, int split_capacity, float scale,
-        float* __restrict__ partial_acc, float* __restrict__ partial_m,
+        bool block_causal, float* __restrict__ partial_acc, float* __restrict__ partial_m,
         float* __restrict__ partial_l, __nv_bfloat16* __restrict__ out) {
     const int batch = static_cast<int>(blockIdx.z);
     const std::int64_t lane_elements =
@@ -53,6 +60,7 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__
         .positions      = batch_positions,
         .padded_context = padded_context,
         .window_mask = window_mask,
+        .block_causal = block_causal,
     };
     context_query_split_partial_body<SlidingWindowAttentionPolicy, Tokens, WarpsPerCta,
                                      KeyBlock, DirectOutput>(

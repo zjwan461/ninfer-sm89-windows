@@ -42,7 +42,11 @@ def _optional(model, recipe):
             else:
                 format = Q5
             _assign(recipe, name, format)
-        elif name.startswith(("mtp/", "dflash/", "dflash2/")):
+        elif name.startswith(("mtp/", "dflash/", "dflash2/", "dspine/")):
+            # The DSpine code bridge stays at BF16: its rounding defines the draft codes, and the
+            # last-write refinement reproduces that rounding exactly.
+            if "/bridge/" in name:
+                continue
             if name.endswith(
                 (
                     "/moe/router",
@@ -54,7 +58,7 @@ def _optional(model, recipe):
             ):
                 continue
             _assign(recipe, name, Q8)
-    for backend in ("dflash", "dflash2"):
+    for backend in ("dflash", "dflash2", "dspine"):
         if backend not in model.components:
             continue
         layers = model.components[backend]["config"]["num_hidden_layers"]
@@ -62,6 +66,9 @@ def _optional(model, recipe):
             prefix = f"{backend}/layers/{layer}/attention/"
             for role in ("key", "value"):
                 recipe.share(prefix + "context_" + role, prefix + role)
+    if "dspine" in model.components:
+        layers = model.components["dspine"]["config"]["num_hidden_layers"]
+        recipe.share(f"dspine/layers/{layers - 1}/bridge/read", "dspine/bridge/final_read")
 
 
 # The official dense Q4/Q5 mix: Q4 for the query/key and gate/up banks, Q5 for the rest.
@@ -125,13 +132,18 @@ def _import_stored(model, recipe, reference: NInferArtifactStore) -> None:
     """Take every parameter, the indexed proposal head and the resources from `reference`, an
     artifact of the same recipe: grouped-integer parents as stored codes and scales
     (`import_encoded`), direct values as stored. Formats, parents and sharing stay those the
-    recipe already selected; a format that differs from the stored one fails."""
+    recipe already selected; a format that differs from the stored one fails. Parameters the
+    reference does not ship keep their own source and recipe, which is how a new component (for
+    example `dspine`) is added to an existing artifact."""
     stored = set(reference.parameters())
     for name, parameter in list(model.parameters.items()):
         if name in recipe.aliases:
             continue
         if name not in stored:
-            raise ValueError(f"reference artifact has no parameter {name}")
+            # A source that adds a component the reference does not ship (for example `dspine`)
+            # keeps that component's own source and recipe: the reference supplies exactly the
+            # parameters it has.
+            continue
         format = reference.stored_format(name)
         if any(selection.format != format for selection in recipe.selections[name]):
             raise ValueError(f"{name}: reference stores {format}, the recipe selects another format")
@@ -144,7 +156,7 @@ def _import_stored(model, recipe, reference: NInferArtifactStore) -> None:
         rows = proposal["rows"]
         inputs = tuple(
             component + "/final_hidden"
-            for component in ("mtp", "dflash", "dflash2")
+            for component in ("mtp", "dflash", "dflash2", "dspine")
             if component in model.components
         )
         head = reference.parameter_source("proposal/head", (rows, model.config["hidden_size"]))

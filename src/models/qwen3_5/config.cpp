@@ -259,15 +259,16 @@ VisionConfig vision(const Json& value) {
     return out;
 }
 
-DraftConfig draft(const Json& value, const TextConfig& target, bool dflash2) {
+DraftConfig draft(const Json& value, const TextConfig& target, DraftBackend backend) {
     require_members(value,
                     {"architectures", "model_type", "intermediate_size", "num_attention_heads",
                      "num_key_value_heads", "head_dim", "num_hidden_layers",
                      "max_position_embeddings", "rms_norm_eps", "rope_parameters", "layer_types",
                      "dflash_config"},
                     {"sliding_window"}, "draft config");
-    if (architecture(value) != (dflash2 ? "DFlash2DraftModel" : "DFlashDraftModel") ||
-        value.at("model_type") != "qwen3") {
+    const char* expected_architecture = backend == DraftBackend::DFlash2 ? "DFlash2DraftModel"
+                                        : "DFlashDraftModel";
+    if (architecture(value) != expected_architecture || value.at("model_type") != "qwen3") {
         throw ArtifactError("draft architecture/model_type mismatch");
     }
     DraftConfig out;
@@ -298,11 +299,65 @@ DraftConfig draft(const Json& value, const TextConfig& target, bool dflash2) {
         out.sliding_window = dimension(value, "sliding_window");
     }
     const auto& config = value.at("dflash_config");
-    if (dflash2) {
+    if (backend == DraftBackend::DFlash2) {
         require_members(config,
                         {"target_layer_ids", "mask_token_id", "conv_kernel_size", "conv_group_size",
                          "selector_rank", "selector_top_k"},
                         {}, "DFlash2 config");
+    } else if (backend == DraftBackend::DSpine) {
+        require_members(config,
+                        {"target_layer_ids", "mask_token_id", "draft_block_causal", "block_size",
+                         "code_bridge"},
+                        {}, "DSpine config");
+        // DSpine serves the causal draft-block forward; the sglang contract keeps every draft
+        // layer on the native sliding window, and the attention Op registers 2048/4096/8192.
+        if (config.at("draft_block_causal") != true) {
+            throw ArtifactError("DSpine requires draft_block_causal");
+        }
+        if (out.layer_types.size() != out.num_hidden_layers ||
+            out.local_layer_count() != out.num_hidden_layers) {
+            throw ArtifactError("DSpine requires every draft layer to be sliding_attention");
+        }
+        if (!out.sliding_window ||
+            (*out.sliding_window != 2048 && *out.sliding_window != 4096 &&
+             *out.sliding_window != 8192)) {
+            throw ArtifactError("DSpine sliding window must be 2048, 4096 or 8192");
+        }
+        DSpineConfig dspine;
+        dspine.block_size = dimension(config, "block_size");
+        if (dspine.block_size < 2 || dspine.block_size > 16) {
+            // The decode frame and the proposal geometry carry at most fifteen drafts.
+            throw ArtifactError("DSpine block size must be in [2,16]");
+        }
+        const auto& bridge = config.at("code_bridge");
+        require_members(bridge, {"code_size", "rank", "eps", "feature_layers", "head_topk"},
+                        {"kappa"}, "DSpine code bridge");
+        dspine.bridge.code_size = dimension(bridge, "code_size");
+        dspine.bridge.rank      = dimension(bridge, "rank");
+        dspine.bridge.eps       = positive_float(bridge, "eps");
+        if (dspine.bridge.eps >= 1) {
+            throw ArtifactError("DSpine code bridge epsilon must be in (0,1)");
+        }
+        if (bridge.contains("kappa")) {
+            dspine.bridge.kappa     = positive_float(bridge, "kappa");
+            dspine.bridge.has_kappa = true;
+        }
+        dspine.bridge.head_topk = dimension(bridge, "head_topk");
+        // The sparse acceptance Op and the candidate ring are sixteen wide; a narrower or wider
+        // refinement width would need its own acceptance profile.
+        if (dspine.bridge.head_topk != 16) {
+            throw ArtifactError("DSpine head_topk must be 16");
+        }
+        const auto& writes = bridge.at("feature_layers");
+        if (!writes.is_array() || writes.size() != out.num_hidden_layers) {
+            throw ArtifactError("DSpine feature_layers must cover every draft layer");
+        }
+        for (std::size_t i = 0; i < writes.size(); ++i) {
+            if (integer(writes[i], "DSpine feature layer", false) != i) {
+                throw ArtifactError("DSpine feature_layers must be 0..layers-1");
+            }
+        }
+        out.dspine = dspine;
     } else {
         require_members(config, {"target_layer_ids", "mask_token_id"}, {}, "DFlash config");
     }
@@ -322,7 +377,7 @@ DraftConfig draft(const Json& value, const TextConfig& target, bool dflash2) {
     if (out.mask_token_id >= target.vocab_size) {
         throw ArtifactError("mask token exceeds target embedding rows");
     }
-    if (dflash2) {
+    if (backend == DraftBackend::DFlash2) {
         DFlash2Config extra{
             dimension(config, "conv_kernel_size"), dimension(config, "conv_group_size"),
             dimension(config, "selector_rank"), dimension(config, "selector_top_k")};
@@ -383,9 +438,15 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
             }
         }
         if (options.speculative == SpeculativeBackend::DFlash ||
-            options.speculative == SpeculativeBackend::DFlash2) {
+            options.speculative == SpeculativeBackend::DFlash2 ||
+            options.speculative == SpeculativeBackend::DSpine) {
+            const DraftBackend backend = options.speculative == SpeculativeBackend::DFlash2
+                                             ? DraftBackend::DFlash2
+                                         : options.speculative == SpeculativeBackend::DSpine
+                                             ? DraftBackend::DSpine
+                                             : DraftBackend::DFlash;
             out.draft = draft(companion(directory, options.speculative_component()).config,
-                              out.text, options.speculative == SpeculativeBackend::DFlash2);
+                              out.text, backend);
         }
         return out;
     } catch (const std::exception& error) {
