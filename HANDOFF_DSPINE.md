@@ -105,11 +105,21 @@ slice checks OK                     # early_read / feature_write 逐层切片、
 
 ---
 
-## 2.5 三份产物：本会话已在本机产出（可作为发布基线）
+## 2.5 三份产物：本会话已在本机产出，随后按用户要求删除（不发布）
+
+> **结论：暂不发布到 Hugging Face。** 没有 DSpine 支持的产物与用户 fork 的上游已发布产物相同，
+> 没有发布价值；等运行时做出来、产物真的包含 `dspine` 组件之后再传。三个空仓库
+> （`zjwan461/qwen3-8-27b-int8-ninfer` / `swift-1-5-27b-ninfer` / `bonsai2-27b-ninfer`）留到那时用。
+> 权重（源 checkpoint 与三份 `.ninfer`）已按用户要求全部删除，本机释放 167 GiB；
+> 只留下三份 `*.conversion.json` 与 `*.sha256`（约 1.5 MB）作为这次产出的记录，位置：
+> `/workspaces/Jerry sou/ninfer-build/artifacts/`（云端工作区，可能不随会话保留，但内容已进 git）。
 
 三份都在无 GPU 的机器上用 `--device cpu` 转换完成。**组成与已发布的 jgamboa 产物一致，文件尺寸
 逐字节相同**（19.03 / 19.03 / 6.40 GiB）；内容没有跟已发布文件做逐字节 diff——转换是确定性的，
 但没有直接比对过。源权重全部按 HF 的 `lfs.oid` 校验过 sha256。
+
+重烤成本（实测，不是估算）：下载源权重按 20 MiB/s 约 95 分钟（Qwen BF16 51.8 + Swift BF16 51.8 +
+DFlash2 3.6 + Bonsai GGUF 5.5 + mmproj 0.6 GiB），转换每份 5–6 分钟。命令见本节末尾。
 
 | 仓库（用户已建） | 文件 | 字节 | 尺寸 | 转换耗时 |
 |---|---|---|---:|---:|---:|
@@ -392,6 +402,9 @@ token       a      MASK ... MASK      mask_token_id=248070
    ```
 
    到那时再按实测决定 backbone 要不要 Q8，可把 3.77 GiB 压到约 2.3 GiB。
+7. **不发布没有 DSpine 的产物**（用户 2026-11-11 明确要求）。三个 `zjwan461/*-ninfer` 仓库保持
+   空着，等第 6 条那次重烤之后再传；上传用 §11.2 的限速脚本，默认 10 MiB/s，先传小文件核对速率。
+   不要因为"仓库已经建好"就先传一份基线上去——那和上游已发布产物重复，只会带来维护负担。
 
 ---
 
@@ -504,5 +517,11 @@ cat files.txt | xargs -P 8 -I{} curl -sL -C - --limit-rate 2400k --retry 3 \
 
 ### 11.6 磁盘与清理
 
-源权重（Qwen BF16 51.8 + Swift BF16 51.8 + DFlash2 3.6 + Bonsai GGUF 5.5 + mmproj 0.6 ≈ 113 GiB）
-+ 产物 45 GiB。产物上传完、源权重确认可再下之后，`/tmp` 下的 `src-*` 可以删。
+本次实测账：源权重 ≈ 113 GiB + 产物 45 GiB。用户决定不发布后已全部删除，`/workspaces` 从
+255 GiB 空闲回到 **423 GiB 空闲（释放 167 GiB）**。保留的只有 1.5 MB 的
+`*.conversion.json` + `*.sha256`。
+
+顺带一个容易踩的坑：`/tmp` 与 `/workspaces` **不在同一个挂载点**（`/tmp` 在 overlay，
+`/workspaces` 是另一个挂了同尺寸卷的挂载），所以 `mv` 是跨设备复制而不是 rename——大目录搬家会
+很慢，中断后会留下半份拷贝（本次 `sources/src-bonsai` 就只剩 5.7 GiB 的残片）。要搬就先在目标
+侧 `mkdir` 再 `cp -a`，或者干脆别搬。
