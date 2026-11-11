@@ -25,7 +25,7 @@ feat/dspine-draft
 └─ 458a7849  feat(convert): convert the Qwen3.8-27B DSpine draft as a dspine component
 ```
 
-云端会话没有 GitHub 凭据，**分支没有 push**。取回方式见第 10 节。
+分支已 push 到 `origin/feat/dspine-draft`。本地 `main` 仍停在 `0916420a`，没有动。
 
 ---
 
@@ -306,20 +306,20 @@ token       a      MASK ... MASK      mask_token_id=248070
 
 ---
 
-## 10. 取回本分支（云端没有 GitHub 凭据）
+## 10. 取回本分支
 
-云端已生成 `ninfer-dspine-draft.bundle`。在本地仓库里：
+分支已经在 origin 上：
+
+```bash
+git fetch origin
+git checkout -b feat/dspine-draft origin/feat/dspine-draft
+```
+
+云端同时留了一份 `ninfer-dspine-draft.bundle` 作为离线备份（需要本地已有 `0916420a`）：
 
 ```bash
 git bundle verify /path/to/ninfer-dspine-draft.bundle
 git fetch /path/to/ninfer-dspine-draft.bundle feat/dspine-draft:feat/dspine-draft
-git checkout feat/dspine-draft
-```
-
-或者在有凭据的机器上直接从本仓库推送：
-
-```bash
-git push -u origin feat/dspine-draft
 ```
 
 云端会话的复现命令（无 GPU 也能跑）：
