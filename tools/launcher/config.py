@@ -115,6 +115,8 @@ class Field:
     placeholder: str = ""
     #: 条件显示：{"key": "<字段>", "values": [...]} 或 {"key": "<字段>", "nonempty": True}
     show_if: dict[str, Any] | None = None
+    #: enum 逐项说明：{"<choice>": {"label": 显示名, "note": 说明, "draft_tokens": 建议草稿数}}
+    choice_info: dict[str, dict[str, Any]] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -132,6 +134,7 @@ class Field:
             "allow_empty": self.allow_empty,
             "placeholder": self.placeholder,
             "show_if": self.show_if,
+            "choice_info": self.choice_info or {},
         }
 
 
@@ -198,6 +201,30 @@ FIELDS: tuple[Field, ...] = (
     Field(
         "spec", "perf", "投机解码后端（--spec）", kind="enum", cli="--spec", choices=SPECS,
         help="启动期固定；留空 = 不加载投机后端",
+        choice_info={
+            "mtp": {
+                "label": "MTP",
+                "note": "共享权重的单层提案头；建议草稿 2-3；可配 --lm-head-draft。",
+                "draft_tokens": 3,
+            },
+            "dflash": {
+                "label": "DFlash",
+                "note": "35B-A3B 的 DFlash 草稿；建议草稿 3-4；可配 --lm-head-draft。",
+                "draft_tokens": 4,
+            },
+            "dflash2": {
+                "label": "DFlash2",
+                "note": "Qwen3.8-27B 的 DFlash2 草稿；建议草稿 7（官方评测为 8 个草稿位）；"
+                        "可配 --lm-head-draft。",
+                "draft_tokens": 7,
+            },
+            "dspine": {
+                "label": "DSpine",
+                "note": "块大小 16 的 DSpine 草稿；建议草稿 15；必须用全词表 head"
+                        "（不支持 --lm-head-draft）；artifact 需含 dspine 组件。",
+                "draft_tokens": 15,
+            },
+        },
     ),
     Field(
         "draft_tokens", "perf", "草稿 token 数（--draft-tokens）", kind="int",

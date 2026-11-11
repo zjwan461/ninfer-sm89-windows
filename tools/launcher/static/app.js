@@ -9,6 +9,7 @@
     schema: null,
     fields: [],
     fieldByKey: {},
+    artifactInfo: null,
     values: {},
     profiles: [],
     profileName: null,
@@ -187,6 +188,12 @@
       hint.id = "artifact-hint";
       control.appendChild(hint);
     }
+    if (field.key === "spec") {
+      const note = document.createElement("div");
+      note.className = "hint spec-note";
+      note.id = "spec-note";
+      control.appendChild(note);
+    }
 
     row.appendChild(label);
     row.appendChild(control);
@@ -213,7 +220,10 @@
       for (const choice of field.choices) {
         const option = document.createElement("option");
         option.value = choice;
-        option.textContent = choice;
+        option.textContent = choiceLabel(field, choice);
+        if (field.choice_info && field.choice_info[choice]) {
+          option.title = field.choice_info[choice].note || "";
+        }
         node.appendChild(option);
       }
       node.value = value === null || value === undefined ? "" : String(value);
@@ -282,11 +292,56 @@
     return raw;
   }
 
+  function choiceLabel(field, choice) {
+    const info = field.choice_info && field.choice_info[choice];
+    return (info && info.label) || choice;
+  }
+
+  // 后端相关的联动：--spec 决定草稿数的建议值，DSpine 不接受 --lm-head-draft。
+  function refreshSpecConstraints() {
+    const spec = String(state.values.spec || "");
+    const specField = state.fieldByKey.spec;
+    const info = specField && specField.choice_info ? specField.choice_info[spec] || null : null;
+    const note = document.getElementById("spec-note");
+    if (note) note.textContent = info && info.note ? info.note : "";
+
+    const artifact = state.artifactInfo;
+    const artifactProposal = !(artifact && artifact.ok) || artifact.proposal;
+    const head = document.getElementById("f-lm-head-draft");
+    if (head) {
+      const specAllows = spec !== "dspine";
+      head.disabled = !(artifactProposal && specAllows);
+      head.title = !specAllows
+        ? "DSpine 使用全词表 head，不接受 --lm-head-draft"
+        : (!artifactProposal ? "该 artifact 不含 proposal 组件" : "");
+      if (head.disabled && head.checked) {
+        head.checked = false;
+        state.values.lm_head_draft = false;
+        schedulePreview();
+      }
+    }
+  }
+
+  function applySpecDefaults(previousSpec) {
+    const spec = String(state.values.spec || "");
+    if (!spec || spec === previousSpec) return;
+    const specField = state.fieldByKey.spec;
+    const info = specField && specField.choice_info ? specField.choice_info[spec] || null : null;
+    const draft = document.getElementById("f-draft-tokens");
+    if (draft && info && info.draft_tokens) {
+      draft.value = String(info.draft_tokens);
+      state.values.draft_tokens = info.draft_tokens;
+    }
+  }
+
   function onFieldChange(key) {
     const field = state.fieldByKey[key];
     if (!field) return;
+    const previous = key === "spec" ? String(state.values.spec || "") : "";
     state.values[key] = readControl(field);
+    if (key === "spec") applySpecDefaults(previous);
     updateVisibility();
+    refreshSpecConstraints();
     if (key === "artifact") scheduleArtifactInfo();
     schedulePreview();
   }
@@ -303,6 +358,7 @@
       else if (rule.nonempty) visible = value !== null && value !== undefined && String(value).trim() !== "";
       row.classList.toggle("hidden", !visible);
     }
+    refreshSpecConstraints();
   }
 
   function applyValues(values) {
@@ -416,6 +472,7 @@
   // 把当前配置收敛到该 artifact 真正支持的能力：不支持就自动纠正并说明原因，
   // 而不是留一个"能选但启动必失败"的状态（引擎会 FATAL: missing component）。
   function applyArtifactCapabilities(info) {
+    state.artifactInfo = info;
     const spec = document.getElementById("f-spec");
     if (spec) {
       const allowed = info && info.ok ? new Set(info.speculative_backends) : null;
@@ -462,6 +519,7 @@
         schedulePreview();
       }
     }
+    refreshSpecConstraints();
   }
 
   const schedulePreview = debounce(() => { renderPreview(); }, 280);
