@@ -57,6 +57,23 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "note": "Q4/Q5 权重 + int8 prefill，带 MTP 与 DFlash2（可直接用内置预设）",
     },
     {
+        "label": "Qwen3.8-27B + DSpine int8（社区构建）",
+        "repo": "zjwan461/Qwen3.8-27B-DSpine-int8-ninfer",
+        "filename": "qwen3_8_27b_dspine.ninfer",
+        "size_gib": 19.22,
+        "preset": "Qwen3.8-27B int8 + DSpine · 4080s",
+        "note": "int8 权重 + MTP + DSpine 草稿（--spec dspine --draft-tokens 15）；"
+                "需要含 dspine Ops 的引擎构建（feat/dspine-draft）",
+    },
+    {
+        "label": "Qwen3.8-27B + DFlash2 int8（社区构建）",
+        "repo": "zjwan461/Qwen3.8-27B-DFlash2-int8-ninfer",
+        "filename": "qwen3_8_27b_a8.ninfer",
+        "size_gib": 19.03,
+        "preset": "Qwen3.8-27B int8 · 4080s",
+        "note": "与 DSpine 版同一套 text/vision/mtp 权重，带 MTP 与 DFlash2；可直接用内置预设",
+    },
+    {
         "label": "Qwen3.8-27B 官方产物（BF16 prefill）",
         "repo": "neroued/Qwen3.8-27B-NInfer",
         "filename": "qwen3_8_27b.ninfer",
@@ -1173,6 +1190,23 @@ def builtin_presets() -> list[dict[str, Any]]:
                 max_context=262144,
                 max_concurrency=2,
                 prefill_chunk=1024,
+                max_pending_requests=10,
+                pending_timeout_ms=600000,
+                spec="dspine",
+                draft_tokens=15,
+                preserve_thinking=True,
+                device_state_slots=3,
+                host_state_slots=4,
+                host_kv_mib=4096,
+            )
+        )
+        presets.append(
+            profile(
+                "Qwen3.8-27B int8 + DSpine · 4090", engine_4090, dspine,
+                model_id="qwen3.8-27b",
+                max_context=100000,
+                max_concurrency=3,
+                prefill_chunk=1408,
                 max_pending_requests=10,
                 pending_timeout_ms=600000,
                 spec="dspine",
