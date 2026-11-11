@@ -42,7 +42,11 @@ def _optional(model, recipe):
             else:
                 format = Q5
             _assign(recipe, name, format)
-        elif name.startswith(("mtp/", "dflash/", "dflash2/")):
+        elif name.startswith(("mtp/", "dflash/", "dflash2/", "dspine/")):
+            # The DSpine code bridge stays at BF16: its rounding defines the draft codes, and the
+            # last-write refinement reproduces that rounding exactly.
+            if "/bridge/" in name:
+                continue
             if name.endswith(
                 (
                     "/moe/router",
@@ -54,7 +58,7 @@ def _optional(model, recipe):
             ):
                 continue
             _assign(recipe, name, Q8)
-    for backend in ("dflash", "dflash2"):
+    for backend in ("dflash", "dflash2", "dspine"):
         if backend not in model.components:
             continue
         layers = model.components[backend]["config"]["num_hidden_layers"]
@@ -62,6 +66,9 @@ def _optional(model, recipe):
             prefix = f"{backend}/layers/{layer}/attention/"
             for role in ("key", "value"):
                 recipe.share(prefix + "context_" + role, prefix + role)
+    if "dspine" in model.components:
+        layers = model.components["dspine"]["config"]["num_hidden_layers"]
+        recipe.share(f"dspine/layers/{layers - 1}/bridge/read", "dspine/bridge/final_read")
 
 
 # The official dense Q4/Q5 mix: Q4 for the query/key and gate/up banks, Q5 for the rest.
@@ -144,7 +151,7 @@ def _import_stored(model, recipe, reference: NInferArtifactStore) -> None:
         rows = proposal["rows"]
         inputs = tuple(
             component + "/final_hidden"
-            for component in ("mtp", "dflash", "dflash2")
+            for component in ("mtp", "dflash", "dflash2", "dspine")
             if component in model.components
         )
         head = reference.parameter_source("proposal/head", (rows, model.config["hidden_size"]))

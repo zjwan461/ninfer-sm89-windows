@@ -122,13 +122,13 @@ def main(argv=None):
         action="append",
         default=[],
         metavar="NAME=PATH",
-        help="named source such as quantized, dflash, dflash2, gguf or mtp "
+        help="named source such as quantized, dflash, dflash2, dspine, gguf or mtp "
         "(.gguf and .ninfer paths open their own readers)",
     )
     parser.add_argument(
         "--components",
         default="text",
-        help="comma-separated text,vision,mtp,dflash,dflash2",
+        help="comma-separated text,vision,mtp,dflash,dflash2,dspine",
     )
     parser.add_argument(
         "--resource",
@@ -161,7 +161,9 @@ def main(argv=None):
         base = stack.enter_context(SafetensorsSource(args.model))
         sources = SourceInputs(base, paths, stack)
         companions = {
-            key: sources[key] for key in ("dflash", "dflash2") if key in components
+            key: sources[key]
+            for key in ("dflash", "dflash2", "dspine")
+            if key in components
         }
         model = build_model(
             base,

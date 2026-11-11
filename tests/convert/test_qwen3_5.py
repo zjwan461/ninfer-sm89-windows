@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import struct
 
 import pytest
 from safetensors.torch import save_file
@@ -400,3 +401,234 @@ def test_selected_vision_processor_geometry_is_checked_before_conversion(tmp_pat
                     components=("text", "vision"),
                     resource_overrides={role: bad},
                 )
+
+
+def _dspine_draft(layers=2, block_size=4, head_topk=2):
+    return {
+        "architectures": ["DFlashDraftModel"],
+        "model_type": "qwen3",
+        "hidden_size": 16,
+        "vocab_size": 8,
+        "draft_vocab_size": 8,
+        "num_target_layers": 2,
+        "num_hidden_layers": layers,
+        "intermediate_size": 24,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 1,
+        "head_dim": 8,
+        "max_position_embeddings": 128,
+        "rms_norm_eps": 1e-6,
+        "rope_theta": 1e7,
+        "rope_parameters": {"rope_theta": 1e7, "rope_type": "default"},
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "is_causal": True,
+        "tie_word_embeddings": False,
+        "block_size": block_size,
+        "layer_types": ["sliding_attention"] * layers,
+        "sliding_window": 32,
+        "code_bridge_second_pass": {
+            "mode": "serial_table",
+            "first_exact": layers - 1,
+            "head_topk": head_topk,
+        },
+        "dflash_config": {
+            "target_layer_ids": [1, 0],
+            "mask_token_id": 7,
+            "draft_block_causal": True,
+            "selected_prefix_terminal": False,
+            "selected_prefix_decode_mode": "serial",
+            "selected_prefix_feature_writes": True,
+            "selected_prefix_feature_write_mode": "independent",
+            "selected_prefix_code_bridge": {
+                "code_size": 4,
+                "rank": 2,
+                "eps": 1e-6,
+                "kappa": 10.0,
+            },
+            "selected_prefix_feature_layers": list(range(1, layers + 1)),
+            "selected_prefix_last_write_refine": {
+                "kind": "exact_sender",
+                "version": 1,
+                "head_topk": head_topk,
+                "weight": 1.0,
+            },
+        },
+    }
+
+
+def _dspine_tensors(layers=2):
+    h, code, rank, inter = 16, 4, 2, 24
+    tensors = {
+        "fc.weight": torch.arange(h * 32).float().reshape(h, 32),
+        "hidden_norm.weight": torch.arange(h).float() + 1,
+        "norm.weight": torch.arange(h).float() + 2,
+        "selected_prefix_bridge.codebook": torch.arange(8 * code).float().reshape(
+            8, code
+        ),
+        "selected_prefix_bridge.gate.weight": torch.arange(rank * code).float()
+        .reshape(rank, code)
+        + 3,
+        "selected_prefix_bridge.gate.bias": torch.arange(rank).float() + 4,
+        "selected_prefix_bridge.predecessor_gate.weight": torch.arange(rank * code)
+        .float()
+        .reshape(rank, code)
+        + 5,
+        "selected_prefix_bridge.prev.weight": torch.arange(rank * code).float()
+        .reshape(rank, code)
+        + 6,
+        "selected_prefix_bridge.read_weight": torch.arange(code * h).float()
+        .reshape(code, h)
+        + 7,
+        "selected_prefix_bridge.early_read_weights": torch.stack(
+            [torch.full((code, h), float(10 + layer)) for layer in range(layers - 1)]
+        ),
+        "selected_prefix_bridge.feature_write_weights": torch.stack(
+            [torch.full((h, rank), float(20 + layer)) for layer in range(layers)]
+        ),
+        "selected_prefix_bridge.out.weight": torch.zeros(code, rank),
+        "draft_block_causal_version": torch.tensor(1, dtype=torch.int64),
+        "last_write_refine_version": torch.tensor(1, dtype=torch.int64),
+        "selected_prefix_bridge.independent_write_version": torch.tensor(
+            1, dtype=torch.int64
+        ),
+        "selected_prefix_bridge.terminal_disabled_version": torch.tensor(
+            1, dtype=torch.int64
+        ),
+    }
+    for layer in range(layers):
+        p = f"layers.{layer}."
+        tensors.update(
+            {
+                p + "input_layernorm.weight": torch.ones(h),
+                p + "post_attention_layernorm.weight": torch.ones(h),
+                p + "self_attn.q_proj.weight": torch.ones(h, h),
+                p + "self_attn.k_proj.weight": torch.ones(h // 2, h),
+                p + "self_attn.v_proj.weight": torch.ones(h // 2, h),
+                p + "self_attn.o_proj.weight": torch.ones(h, h),
+                p + "self_attn.q_norm.weight": torch.ones(h // 2),
+                p + "self_attn.k_norm.weight": torch.ones(h // 2),
+                p + "mlp.gate_proj.weight": torch.ones(inter, h),
+                p + "mlp.up_proj.weight": torch.ones(inter, h),
+                p + "mlp.down_proj.weight": torch.ones(h, inter),
+            }
+        )
+    return tensors
+
+
+def test_dspine_bridge_config_is_normalized_and_every_layer_writes(tmp_path):
+    draft = _dspine_draft()
+    with (
+        _checkpoint(tmp_path / "text", _config(), {"unused": torch.ones(1)}) as base,
+        _checkpoint(tmp_path / "dspine", draft, _dspine_tensors()) as companion,
+    ):
+        model = build_model(
+            base, components=("text", "dspine"), companions={"dspine": companion}
+        )
+        config = model.components["dspine"]["config"]
+        assert config["architectures"] == ["DFlashDraftModel"]
+        bridge = config["dflash_config"]
+        assert bridge["draft_block_causal"] is True
+        assert bridge["block_size"] == 4
+        assert bridge["code_bridge"] == {
+            "code_size": 4,
+            "rank": 2,
+            "eps": struct.unpack("<f", struct.pack("<f", 1e-6))[0],
+            "kappa": struct.unpack("<f", struct.pack("<f", 10.0))[0],
+            "feature_layers": [0, 1],
+            "head_topk": 2,
+        }
+        assert model.parameters["dspine/feature_projection"].shape == (16, 32)
+        assert model.parameters["text/output_head"].inputs == (
+            "text/final_hidden",
+            "dspine/final_hidden",
+        )
+        # The last draft layer reads the final projection; earlier layers slice the early bank.
+        assert torch.equal(
+            _values(model, "dspine/layers/1/bridge/read"),
+            torch.arange(4 * 16).float().reshape(4, 16) + 7,
+        )
+        assert torch.equal(
+            _values(model, "dspine/layers/0/bridge/read"),
+            torch.full((4, 16), 10.0),
+        )
+        for layer in range(2):
+            assert torch.equal(
+                _values(model, f"dspine/layers/{layer}/bridge/write"),
+                torch.full((16, 2), float(20 + layer)),
+            )
+        assert torch.equal(
+            _values(model, "dspine/bridge/codebook"),
+            torch.arange(32).float().reshape(8, 4),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda raw: raw["dflash_config"].pop("draft_block_causal"), "draft_block_causal"),
+        (
+            lambda raw: raw["code_bridge_second_pass"].update(first_exact=0),
+            "first_exact",
+        ),
+        (lambda raw: raw["dflash_config"].update(conv_kernel_size=2), "convolution"),
+        (
+            lambda raw: raw["dflash_config"]["selected_prefix_last_write_refine"].update(
+                head_topk=4
+            ),
+            "refinement width",
+        ),
+        (lambda raw: raw["dflash_config"].update(selected_prefix_feature_layers=[1]), "bridge write"),
+        (lambda raw: raw.update(block_size=1), "block_size"),
+        (
+            lambda raw: (
+                raw["code_bridge_second_pass"].update(head_topk=48),
+                raw["dflash_config"]["selected_prefix_last_write_refine"].update(
+                    head_topk=48
+                ),
+            ),
+            "power of two",
+        ),
+        (
+            lambda raw: raw["dflash_config"].update(selected_prefix_decode_mode="parallel"),
+            "decode_mode",
+        ),
+    ],
+)
+def test_dspine_config_rejects_unsupported_checkpoints(mutate, message):
+    raw = deepcopy(_dspine_draft())
+    mutate(raw)
+    with pytest.raises(ValueError, match=message):
+        draft_config(raw, _config()["text_config"], "dspine")
+
+
+def test_dspine_recipe_quantizes_the_backbone_and_keeps_the_bridge_at_bf16(tmp_path):
+    from tools.convert.official_recipes import qwen3_8_27b
+    from tools.convert.recipe import Recipe
+
+    with (
+        _checkpoint(tmp_path / "text", _config(), {"unused": torch.ones(1)}) as base,
+        _checkpoint(
+            tmp_path / "dspine", _dspine_draft(), _dspine_tensors()
+        ) as companion,
+    ):
+        model = build_model(
+            base, components=("text", "dspine"), companions={"dspine": companion}
+        )
+        recipe = Recipe(model)
+        qwen3_8_27b(model, recipe, {})
+        # The last layer's read is the refinement's final read: one stored tensor, two names.
+        assert recipe.aliases["dspine/layers/1/bridge/read"] == "dspine/bridge/final_read"
+        for name in (
+            "dspine/bridge/codebook",
+            "dspine/bridge/gate_projection",
+            "dspine/bridge/gate_bias",
+            "dspine/bridge/predecessor_projection",
+            "dspine/bridge/value_projection",
+            "dspine/bridge/final_read",
+            "dspine/layers/0/bridge/read",
+            "dspine/layers/0/bridge/write",
+        ):
+            assert {s.format for s in recipe.selections[name]} == {"bf16"}, name
+        for name in ("dspine/feature_projection", "dspine/layers/0/attention/query"):
+            assert {s.format for s in recipe.selections[name]} == {"q8_g32_fp16"}, name

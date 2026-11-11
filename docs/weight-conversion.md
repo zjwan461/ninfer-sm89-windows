@@ -104,10 +104,16 @@ The configuration directory holds the Qwen3.8 `config.json` and the frontend res
 `preprocessor_config.json`, `video_preprocessor_config.json`); the recipe replaces the resources by
 the reference's bytes. The DFlash2 source supplies only its configuration here.
 
-MTP and Vision use the main source. DFlash and DFlash2 use the corresponding named source, supplied
-as `--source dflash=PATH` or `--source dflash2=PATH`. An artifact may contain several optional
-components; the Engine loads only the ones selected at startup, including at most one speculative
-backend. Component availability and startup selection are independent.
+MTP and Vision use the main source. DFlash, DFlash2 and the DSpine draft use the corresponding
+named source, supplied as `--source dflash=PATH`, `--source dflash2=PATH` or `--source dspine=PATH`.
+An artifact may contain several optional components; the Engine loads only the ones selected at
+startup, including at most one speculative backend. Component availability and startup selection
+are independent.
+
+The `dspine` component converts a `Qwen3.8-27B-*DSpine*` draft: its backbone takes the usual Q8
+projection format, while every code-bridge tensor stays BF16 because the bridge rounding defines
+the draft codes. The converter validates the checkpoint's bridge geometry and writes the component;
+no runtime backend selects it yet.
 
 ## Change part of a recipe
 
