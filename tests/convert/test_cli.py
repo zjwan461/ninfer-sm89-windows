@@ -6,6 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+import torch
+from safetensors.torch import save_file
+
 from tools.artifact.reader import Artifact
 from tools.artifact.schema import binding_parts
 
@@ -116,3 +119,197 @@ def configure(model, recipe, sources):
             artifact.directory.bindings["text/layers/0/mlp/up"], artifact.by_id
         )[0][0]
         assert gate != up
+
+
+def test_cli_writes_a_dspine_component_with_a_bf16_bridge(tmp_path):
+    text = tmp_path / "text"
+    text.mkdir()
+    config = {
+        "architectures": ["Qwen3_5ForCausalLM"],
+        "hidden_size": 128,
+        "vocab_size": 8,
+        "num_hidden_layers": 1,
+        "max_position_embeddings": 128,
+        "layer_types": ["full_attention"],
+        "num_attention_heads": 2,
+        "num_key_value_heads": 1,
+        "head_dim": 8,
+        "intermediate_size": 64,
+        "rope_parameters": {"partial_rotary_factor": 0.5, "mrope_section": [1, 1, 0]},
+    }
+    (text / "config.json").write_text(json.dumps(config))
+    for name, value in {
+        "tokenizer.json": {"model": {"vocab": {str(i): i for i in range(6)}}},
+        "tokenizer_config.json": {},
+        "generation_config.json": {},
+    }.items():
+        (text / name).write_text(json.dumps(value))
+    (text / "chat_template.jinja").write_text("{{ messages }}")
+    h, inter = 128, 64
+    save_file(
+        {
+            "model.embed_tokens.weight": torch.ones(8, h),
+            "lm_head.weight": torch.ones(8, h),
+            "model.norm.weight": torch.ones(h),
+            "model.layers.0.input_layernorm.weight": torch.ones(h),
+            "model.layers.0.post_attention_layernorm.weight": torch.ones(h),
+            "model.layers.0.self_attn.q_proj.weight": torch.ones(32, h),
+            "model.layers.0.self_attn.k_proj.weight": torch.ones(8, h),
+            "model.layers.0.self_attn.v_proj.weight": torch.ones(8, h),
+            "model.layers.0.self_attn.o_proj.weight": torch.ones(h, 16),
+            "model.layers.0.self_attn.q_norm.weight": torch.ones(8),
+            "model.layers.0.self_attn.k_norm.weight": torch.ones(8),
+            "model.layers.0.mlp.gate_proj.weight": torch.ones(inter, h),
+            "model.layers.0.mlp.up_proj.weight": torch.ones(inter, h),
+            "model.layers.0.mlp.down_proj.weight": torch.ones(h, inter),
+        },
+        text / "model.safetensors",
+    )
+
+    draft = tmp_path / "dspine"
+    draft.mkdir()
+    layers, code, rank = 2, 4, 2
+    draft_config = {
+        "architectures": ["DFlashDraftModel"],
+        "model_type": "qwen3",
+        "hidden_size": h,
+        "vocab_size": 8,
+        "draft_vocab_size": 8,
+        "num_target_layers": 1,
+        "num_hidden_layers": layers,
+        "intermediate_size": inter,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 1,
+        "head_dim": 8,
+        "max_position_embeddings": 128,
+        "rms_norm_eps": 1e-6,
+        "rope_theta": 1e7,
+        "rope_parameters": {"rope_theta": 1e7, "rope_type": "default"},
+        "hidden_act": "silu",
+        "attention_bias": False,
+        "is_causal": True,
+        "tie_word_embeddings": False,
+        "block_size": 4,
+        "layer_types": ["sliding_attention"] * layers,
+        "sliding_window": 32,
+        "code_bridge_second_pass": {
+            "mode": "serial_table",
+            "first_exact": layers - 1,
+            "head_topk": 2,
+        },
+        "dflash_config": {
+            "target_layer_ids": [0],
+            "mask_token_id": 7,
+            "draft_block_causal": True,
+            "selected_prefix_terminal": False,
+            "selected_prefix_decode_mode": "serial",
+            "selected_prefix_feature_writes": True,
+            "selected_prefix_feature_write_mode": "independent",
+            "selected_prefix_code_bridge": {
+                "code_size": code,
+                "rank": rank,
+                "eps": 1e-6,
+                "kappa": 10.0,
+            },
+            "selected_prefix_feature_layers": list(range(1, layers + 1)),
+            "selected_prefix_last_write_refine": {
+                "kind": "exact_sender",
+                "version": 1,
+                "head_topk": 2,
+                "weight": 1.0,
+            },
+        },
+    }
+    (draft / "config.json").write_text(json.dumps(draft_config))
+    tensors = {
+        "fc.weight": torch.ones(h, h),
+        "hidden_norm.weight": torch.ones(h),
+        "norm.weight": torch.ones(h),
+        "selected_prefix_bridge.codebook": torch.ones(8, code),
+        "selected_prefix_bridge.gate.weight": torch.ones(rank, code),
+        "selected_prefix_bridge.gate.bias": torch.ones(rank),
+        "selected_prefix_bridge.predecessor_gate.weight": torch.ones(rank, code),
+        "selected_prefix_bridge.prev.weight": torch.ones(rank, code),
+        "selected_prefix_bridge.read_weight": torch.ones(code, h),
+        "selected_prefix_bridge.early_read_weights": torch.ones(layers - 1, code, h),
+        "selected_prefix_bridge.feature_write_weights": torch.ones(layers, h, rank),
+        "selected_prefix_bridge.out.weight": torch.zeros(code, rank),
+        "draft_block_causal_version": torch.tensor(1, dtype=torch.int64),
+        "last_write_refine_version": torch.tensor(1, dtype=torch.int64),
+        "selected_prefix_bridge.independent_write_version": torch.tensor(
+            1, dtype=torch.int64
+        ),
+        "selected_prefix_bridge.terminal_disabled_version": torch.tensor(
+            1, dtype=torch.int64
+        ),
+    }
+    for layer in range(layers):
+        p = f"layers.{layer}."
+        tensors.update(
+            {
+                p + "input_layernorm.weight": torch.ones(h),
+                p + "post_attention_layernorm.weight": torch.ones(h),
+                p + "self_attn.q_proj.weight": torch.ones(16, h),
+                p + "self_attn.k_proj.weight": torch.ones(8, h),
+                p + "self_attn.v_proj.weight": torch.ones(8, h),
+                p + "self_attn.o_proj.weight": torch.ones(h, 16),
+                p + "self_attn.q_norm.weight": torch.ones(8),
+                p + "self_attn.k_norm.weight": torch.ones(8),
+                p + "mlp.gate_proj.weight": torch.ones(inter, h),
+                p + "mlp.up_proj.weight": torch.ones(inter, h),
+                p + "mlp.down_proj.weight": torch.ones(h, inter),
+            }
+        )
+    save_file(tensors, draft / "model.safetensors")
+
+    output = tmp_path / "dspine.ninfer"
+    command = [
+        sys.executable,
+        "-B",
+        "-m",
+        "tools.convert",
+        "--model",
+        str(text),
+        "--recipe",
+        "qwen3_8_27b",
+        "--source",
+        "dspine=" + str(draft),
+        "--components",
+        "text,dspine",
+        "--out",
+        str(output),
+        "--device",
+        "cpu",
+    ]
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        command,
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    with Artifact(output) as artifact:
+        assert set(artifact.directory.components) == {"text", "dspine"}
+        bridge = artifact.directory.components["dspine"]["config"]["dflash_config"]
+        assert bridge["block_size"] == 4
+        assert bridge["code_bridge"]["feature_layers"] == [0, 1]
+        for name in (
+            "dspine/bridge/codebook",
+            "dspine/bridge/gate_projection",
+            "dspine/layers/0/bridge/read",
+            "dspine/layers/0/bridge/write",
+        ):
+            parent = binding_parts(artifact.directory.bindings[name], artifact.by_id)[0][0]
+            assert artifact.object(parent).format == "bf16", name
+        # The last layer's read and the refinement's final read are one stored object.
+        assert binding_parts(
+            artifact.directory.bindings["dspine/layers/1/bridge/read"], artifact.by_id
+        ) == binding_parts(
+            artifact.directory.bindings["dspine/bridge/final_read"], artifact.by_id
+        )
+        parent = binding_parts(
+            artifact.directory.bindings["dspine/feature_projection"], artifact.by_id
+        )[0][0]
+        assert artifact.object(parent).format == "q8_g32_fp16"

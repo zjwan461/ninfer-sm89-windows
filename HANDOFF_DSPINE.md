@@ -39,12 +39,13 @@ feat/dspine-draft
 | `tools/convert/official_recipes.py` | `_optional()`：backbone 取 Q8、`*/bridge/*` 强制 BF16；`dspine` 也共享 `context_key/value`；最后一层 `bridge/read` 与 `bridge/final_read` 共享 |
 | `tools/convert/proposal.py`、`tools/convert/__main__.py` | 组件列表/CLI 帮助加入 `dspine`（`--source dspine=PATH --components text,dspine`） |
 | `tests/convert/test_qwen3_5.py` | 新增 3 个测试：配置归一化 + 逐层 bridge 切片、8 个非法配置用例、recipe 量化策略 |
+| `tests/convert/test_cli.py` | 端到端：真的写出一个含 `dspine` 组件的 `.ninfer` 再读回（bridge BF16、backbone Q8、read 别名共用同一存储对象） |
 | `docs/weight-conversion.md` | 说明 `dspine` 组件与其 BF16 约束，并注明运行时尚未选择它 |
 
 验证证据：
 
 ```bash
-python3 -m pytest tests/convert -q          # 75 passed, 4 skipped
+python3 -m pytest tests/convert -q          # 77 passed, 4 skipped
 ```
 
 真实 checkpoint 对拍（下载了 `model.safetensors` 4.05 GB + 目标 config）：
@@ -111,7 +112,7 @@ git fetch <bundle> feat/dspine-draft:feat/dspine-draft
 git checkout feat/dspine-draft
 CMakePresets.json 里选 4090 预设（NINFER_TARGET_SM_COUNT=128）
 cmake --build build-4090 -j
-python -m pytest tests/convert -q     :: 必须 75 passed, 4 skipped
+python -m pytest tests/convert -q     :: 必须 77 passed, 4 skipped
 ```
 
 ### T2 C++ 配置与权重绑定（1–2 天）
