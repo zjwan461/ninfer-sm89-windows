@@ -21,8 +21,8 @@ int cancellation_conformance() {
     namespace qw    = test::quantized_weight;
     int failures    = 0;
     constexpr int t = 129;
-    for (const auto [n, k] : std::array<std::array<int, 2>, 4>{
-             {{2048, 4096}, {2048, 6144}, {5120, 6144}, {5120, 17408}}}) {
+    for (const auto [n, k] : std::array<std::array<int, 2>, 5>{
+             {{2048, 4096}, {2048, 6144}, {5120, 4096}, {5120, 6144}, {5120, 17408}}}) {
         auto packed = qw::make_patterned_weight(QType::Q8_G32_FP16, n, k, 427U);
         std::fill_n(packed.payload.begin(), packed.code_plane_bytes, std::uint8_t{1});
         constexpr std::uint16_t scale = 0x3000; // FP16 0.125
@@ -91,7 +91,7 @@ int q8_a16_conformance() {
     constexpr std::array<std::int32_t, 8> large_interiors{1, 4, 8, 96, 128, 512, 1024, 1025};
     constexpr std::array<std::int32_t, 6> graph_tokens{1, 8, 64, 65, 129, 512};
     constexpr std::array<std::int32_t, 3> full_tokens{1, 4, 8};
-    for (const auto k : {6144, 17408}) {
+    for (const auto k : {4096, 6144, 17408}) {
         failures += ninfer::test::linear_add::run_shape(
             "Q8_A16 LinearAdd", WeightFormat::Q8G32F16S,
             ShapeCase{5120, k, 423U, large_route_starts, large_interiors, graph_tokens});

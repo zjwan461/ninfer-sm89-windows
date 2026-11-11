@@ -112,7 +112,8 @@ struct Cache {
 std::vector<double> oracle(const Cache& cache, int width, int batch, const std::vector<float>& q,
                            const std::vector<float>& qk, const std::vector<float>& qv,
                            const std::vector<int>& positions, const std::vector<int>& valid,
-                           const std::vector<int>& lanes) {
+                           const std::vector<int>& lanes,
+                           ops::SlidingWindowMask mask = ops::SlidingWindowMask::ContextWindow) {
     std::vector<double> out(static_cast<std::size_t>(D) * Hq * width * batch, 0.0);
     std::vector<std::thread> workers;
     for (int b = 0; b < batch; ++b)
@@ -155,6 +156,11 @@ std::vector<double> oracle(const Cache& cache, int width, int batch, const std::
                         const int kp = key < context_count
                                            ? start + key
                                            : positions[b * width + key - context_count];
+                        // A causal draft block additionally hides query rows after the query.
+                        if (mask == ops::SlidingWindowMask::BlockCausal && key >= context_count &&
+                            kp > p) {
+                            return false;
+                        }
                         return std::abs(static_cast<std::int64_t>(kp) - p) < cache.window;
                     },
                     [&](int d, int h, int, double value) {
@@ -170,7 +176,8 @@ std::vector<double> oracle(const Cache& cache, int width, int batch, const std::
 enum class Prefix { Full, Mixed, Zero };
 
 int run_case(Cache& cache, int width, int batch, int base_context, int envelope_max, Prefix prefix,
-             bool replay, std::size_t* observed = nullptr) {
+             bool replay, std::size_t* observed = nullptr,
+             ops::SlidingWindowMask mask = ops::SlidingWindowMask::ContextWindow) {
     const std::size_t q_count  = static_cast<std::size_t>(D) * Hq * width * batch;
     const std::size_t kv_count = static_cast<std::size_t>(D) * Hkv * width * batch;
     std::vector<float> q(q_count), qk(kv_count), qv(kv_count);
@@ -222,7 +229,7 @@ int run_case(Cache& cache, int width, int batch, int base_context, int envelope_
     DeviceContext device;
     const auto launch = [&] {
         ops::sliding_window_attention(tq, tk, tv, tp, tvalid, tlane, Geometry, cache.window, Scale,
-                                      context, envelope, workspace, to, device.stream);
+                                      mask, context, envelope, workspace, to, device.stream);
     };
     DecodeGraphDefinition definition;
     DecodeGraphExecutable graph;
@@ -271,7 +278,8 @@ int run_case(Cache& cache, int width, int batch, int base_context, int envelope_
         else
             launch();
         cuda_synchronize(device.stream);
-        const auto expected = oracle(cache, width, batch, q, qk, value, positions, valid, lanes);
+        const auto expected =
+        oracle(cache, width, batch, q, qk, value, positions, valid, lanes, mask);
         const std::string label = "SWA window=" + std::to_string(cache.window) +
                                   " W=" + std::to_string(width) + " B=" + std::to_string(batch) +
                                   " L=" + std::to_string(base_context) +
@@ -381,6 +389,22 @@ int qualify() {
         Cache edge(4096, true);
         failures += run_case(edge, 2, 1, 4096, 4096, Prefix::Full, true);
         failures += edge.verify();
+    }
+    {
+        // DSpine's native draft block: window 8192 with a causal block mask.
+        Cache dspine(8192);
+        for (int width : {1, 2, 7, 16})
+            for (int batch : {1, 4}) {
+                failures += run_case(dspine, width, batch, -1, 8192, Prefix::Mixed, true, nullptr,
+                                     ops::SlidingWindowMask::BlockCausal);
+                failures += run_case(dspine, width, batch, 8300, 16384, Prefix::Mixed, false,
+                                     nullptr, ops::SlidingWindowMask::BlockCausal);
+            }
+        failures += run_case(dspine, 16, 8, 8191, 8191, Prefix::Full, true, nullptr,
+                             ops::SlidingWindowMask::BlockCausal);
+        failures += run_case(dspine, 8, 1, 8194, 8194, Prefix::Zero, true, nullptr,
+                             ops::SlidingWindowMask::BlockCausal);
+        failures += dspine.verify();
     }
     return failures;
 }
