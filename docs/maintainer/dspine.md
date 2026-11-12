@@ -69,7 +69,7 @@ read back; the refinement reproduces the same rounding, so changing any of them 
 tokens.
 
 Read, after the layer's MLP (`raw` is the BF16 residual buffer, `f = FP32(raw)`,
-`n = t*W + ...` column of the block):
+`n = b*W + t` column of the block):
 
 1. `rms = sqrt(max(mean(f*f), 1.1754943508222875e-38))` — the FP32 *tiny* floor, not `rms_norm_eps`.
 2. `xnorm = BF16(f / (rms + eps))` — epsilon is added to the denominator.

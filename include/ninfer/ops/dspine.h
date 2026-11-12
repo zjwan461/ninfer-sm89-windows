@@ -32,7 +32,8 @@ inline constexpr std::int32_t kDSpineTokenDomain = 248077;
  * codes, replace the block's anchor row with the anchor's codebook row, and project the codes
  * into the [gate; predecessor; value] message operands.
  *
- * @details Ideal arithmetic, for block width W, batch B and column `n = t*B + b`:
+ * @details Ideal arithmetic, for block width W, batch B and column `n = b*W + t` (batch fastest,
+ * matching the `{hidden, width, batch}` residual):
  *
  *   f       = FP32(residual[:, t, b])
  *   rms[n]  = sqrt(max(mean(f*f), 1.1754943508222875e-38))       // FP32 tiny, not eps
@@ -62,11 +63,11 @@ void dspine_bridge_read(const Tensor& residual, const Tensor& read, const Tensor
  * @brief One bridge write: fold the codebook message back into the residual and normalize the
  * next layer's input.
  *
- * @details For column `n = t*B + b`, with the predecessor row read at column `n - B` (the same
- * request's previous block row):
+ * @details For column `n = b*W + t` (batch fastest), with the predecessor row read at column
+ * `n - 1` (the same request's previous block row):
  *
- *   gate[r] = sigmoid(FP32(packed[r,n]) + FP32(packed[rank+r,n-B]) + FP32(gate_bias[r]))
- *   msg[r]  = t == 0 ? 0 : BF16(gate[r] * FP32(packed[2*rank+r,n-B]))
+ *   gate[r] = sigmoid(FP32(packed[r,n]) + FP32(packed[rank+r,n-1]) + FP32(gate_bias[r]))
+ *   msg[r]  = t == 0 ? 0 : BF16(gate[r] * FP32(packed[2*rank+r,n-1]))
  *   delta[d]= sum_r FP32(msg[r]) * FP32(write[d,r])              // FP32 accumulation
  *   out[d,n] = BF16(FP32(residual[d,n]) + (t != 0 ? rms[n]*delta[d] : 0))
  *   y[d]    = BF16(FP32(out[d,n]) * rsqrt(mean_d(out[.,n]^2) + eps))
