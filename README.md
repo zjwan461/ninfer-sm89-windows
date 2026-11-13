@@ -639,6 +639,7 @@ The full protocol reference, including every field and error code, is in
 | All documentation | [docs/README.md](docs/README.md) |
 | This fork's release notes (v0.7.0) | [RELEASE_NOTES_0.7.0.md](RELEASE_NOTES_0.7.0.md) |
 | Release build CI (three profiles on Windows) | [.github/workflows/windows-release.yml](.github/workflows/windows-release.yml) |
+| How a release is cut and verified | [docs/maintainer/release-process.md](docs/maintainer/release-process.md) |
 | CLI options | [docs/cli.md](docs/cli.md) |
 | HTTP server and protocols | [docs/serving.md](docs/serving.md) |
 | Windows build, Qwen3.8 measurements and experiments | [WINDOWS_PORT.md](WINDOWS_PORT.md) |

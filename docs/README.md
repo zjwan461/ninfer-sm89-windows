@@ -63,6 +63,7 @@ other references own narrower contracts:
 | [Ternary Bonsai design notes](maintainer/bonsai-ternary-design.md) | ternary format, kernels, speculation work and every measurement of this fork (section 9.1) |
 | [Ternary Bonsai conversion](maintainer/bonsai-ternary-conversion.md) | Prism GGUF reading, tensor mapping and conversion checks |
 | [Build system](maintainer/build-system.md) | CMake targets, explicit source ownership, CUDA compilation boundaries, presets and developer configuration |
+| [Release process](maintainer/release-process.md) | archives per architecture, cutting a release, the hosted-runner constraints and the post-release checks |
 | [Artifact container](maintainer/artifact-container.md) | v3 directory, objects, logical bindings, Uses, resources and file framing/sharding |
 | [Numeric formats](maintainer/tensor-formats.md) | represented values, codes/scales, conversion arithmetic and numerical interpretation |
 | [Storage layouts](maintainer/storage-layouts.md) | packing, plane offsets, padding, encoded sizes and view addressing |

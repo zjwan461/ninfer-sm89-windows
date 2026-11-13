@@ -1,0 +1,68 @@
+name: Checks
+
+# Fast, GPU-free checks: the Python tooling byte-compiles, the launcher tests pass, every script
+# parses, and the documentation links resolve. This is the regression net for the parts the
+# release build does not exercise -- the packager, the launchers and the docs. The three-profile
+# build itself lives in `windows-release.yml`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    # Windows because the launcher tests exercise Windows process creation (CREATE_NO_WINDOW) and
+    # the packager and start scripts are Windows-only artifacts.
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      # The download tests start a local HTTP server; never route 127.0.0.1 through a proxy.
+      # One key only: GitHub rejects an environment that repeats a name with different case, and
+      # it rejects it by failing the whole workflow with zero jobs and no message.
+      NO_PROXY: 127.0.0.1,localhost
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install launcher dependencies
+        run: python -m pip install --disable-pip-version-check -r tools/launcher/requirements.txt pytest
+
+      - name: Byte-compile the Python tooling
+        run: python -m compileall -q tools/launcher tools/convert eval/ninfer_eval
+
+      - name: Launcher tests
+        run: python -m pytest tests/launcher -q
+
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($script in Get-ChildItem scripts/*.ps1) {
+            $errors = $null
+            $tokens = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $script.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($error in $errors) {
+              Write-Host "$($script.Name):$($error.Extent.StartLineNumber): $($error.Message)"
+              $failed = $true
+            }
+          }
+          if ($failed) { throw 'a PowerShell script does not parse' }
+
+      - name: Bash scripts parse
+        shell: bash
+        run: |
+          for script in scripts/*.sh; do
+            bash -n "$script" || exit 1
+          done
+
+      - name: Documentation links
+        run: python tools/check_doc_links.py
