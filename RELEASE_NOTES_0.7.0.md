@@ -10,10 +10,11 @@ serving protocol are unchanged.
 |---|---|---:|---|
 | RTX 4090 24 GB | `sm_89` | 128 | prebuilt, `sm128-rtx4090/` |
 | RTX 4080 SUPER 16/32 GB | `sm_89` | 80 | prebuilt, `sm80-rtx4080s/` |
-| RTX 5060 Ti 16 GB | `sm_120a` | 36 | source build |
+| RTX 5060 Ti 16 GB | `sm_120a` | 36 | prebuilt, `sm36-rtx5060ti/` (Bonsai only) |
 
-The prebuilt archive carries the two `sm_89` profiles. The RTX 5060 Ti needs its own `sm_120a`
-binary and is built from source (`-DCMAKE_CUDA_ARCHITECTURES=120a -DNINFER_TARGET_SM_COUNT=36`).
+One archive carries all three, one folder per card; a binary only runs on the architecture it was
+built for. The 16 GB card is qualified on Bonsai: the Qwen3.8-27B weights alone are 15.9 GiB, so
+its folder ships one launcher.
 The RTX 3090 (`sm_86`) port belongs to the upstream [Don-Chad/ninfer-3090] line; this tree accepts
 only `89` and `120a` and does not build `sm_86`.
 
@@ -42,6 +43,10 @@ only `89` and `120a` and does not build `sm_86`.
 - **Per-profile launchers and a local WebUI.** `start-bonsai-*.bat` and `start-qwen38-*.bat` exist
   for all three profiles, and `start-launcher.bat` configures and supervises `ninfer-serve.exe`
   from a browser form, shipping the launcher profiles as presets.
+- **Windows release CI.** `.github/workflows/windows-release.yml` builds the three presets on a
+  hosted Windows runner, packages them with the repository's own script, uploads the archive as a
+  build artifact and attaches it to a `v*` tag's release. The runner has no GPU, so it proves the
+  tree configures, compiles and links; kernel correctness still comes from `ctest` on a card.
 - **One release packager.** `scripts/package-release-v061-sm89.ps1` (and its Bash counterpart)
   replaces the upstream v0.4.0-v0.6.0 packagers; the older scripts and the `sm_86` Linux guide are
   removed, together with the completed fork work plans that were still in the repository root.
@@ -58,4 +63,5 @@ and CUDA test suite is unchanged: `ctest --test-dir build --output-on-failure` a
 - One card per build and per process. A binary built for one architecture does not load on the
   other, and one built for the wrong SM count only loses wave utilization -- it stays correct.
 - The Linux `Dockerfile` builds the 128-SM `sm_89` profile and is not validated by this fork.
-- No prebuilt RTX 5060 Ti archive.
+- The `sm89` token in the archive name is historical: the archive also carries the `sm_120a`
+  profile.

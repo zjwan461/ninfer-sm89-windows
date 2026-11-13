@@ -17,12 +17,14 @@ launcher pair for that profile: `start-bonsai-rtx4090.bat` + `start-qwen38-rtx40
 `ninfer-sm89-windows-x64-<version>.zip`, and writes `dist/SHA256SUMS-v<version>-sm89.txt`. The two
 pairs differ only in `--prefill-chunk`, which is the one knob tied to the attention wave geometry.
 
-The RTX 5060 Ti 16 GB is `sm_120a` (36 SMs) and has no prebuilt archive: an `sm_89` binary cannot
-load on it. Build that profile from source with `-DCMAKE_CUDA_ARCHITECTURES=120a
--DNINFER_TARGET_SM_COUNT=36`; there is no `sm_120a` packager yet.
+The RTX 5060 Ti 16 GB is `sm_120a` (36 SMs) and ships from the same script as the third profile
+(`sm36-rtx5060ti/`, built from `release-5060ti`). An `sm_89` binary cannot load on that card, so
+each folder has to match the card. `.github/workflows/windows-release.yml` builds all three
+profiles on a Windows runner and runs this packager, on a `v*` tag or on demand.
 
-Before packaging, each profile's `NINFER_TARGET_SM_COUNT` is asserted against its build directory's
-`compile_commands.json`, so a mislabeled dual-SM archive cannot be produced silently. The script is
+Before packaging, each profile's `NINFER_TARGET_SM_COUNT` and target architecture are asserted
+against its build directory's `compile_commands.json`, so a mislabeled archive cannot be produced
+silently. The script is
 pack-only: it fails when a build directory or product is missing.
 
 Generated binaries and archives are ignored by Git because GitHub source repositories should not

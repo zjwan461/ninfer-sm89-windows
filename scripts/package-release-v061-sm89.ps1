@@ -3,15 +3,17 @@ param(
     # available build (for example on an RTX 4080 SUPER machine without a 128-SM tree) keeps the
     # pack-only contract honest instead of forcing a throw:
     #   powershell -ExecutionPolicy Bypass -File scripts\package-release-v061-sm89.ps1 -Cards rtx4080s
-    [ValidateSet('rtx4090', 'rtx4080s')]
-    [string[]]$Cards = @('rtx4090', 'rtx4080s')
+    [ValidateSet('rtx4090', 'rtx4080s', 'rtx5060ti')]
+    [string[]]$Cards = @('rtx4090', 'rtx4080s', 'rtx5060ti')
 )
 
 $ErrorActionPreference = 'Stop'
 
 # Fork-local release packager for the native Windows port.
-# Targets this fork's Ninja build trees (build/, build-4080s/, build-5060ti/) and bundles the two
-# sm_89 compile-time SM profiles. The RTX 5060 Ti is sm_120a and has no packager here.
+# Targets this fork's Ninja build trees (build/, build-4080s/, build-5060ti/) and bundles the three
+# qualified compile-time profiles: RTX 4090 and RTX 4080 SUPER (sm_89), RTX 5060 Ti (sm_120a).
+# The archive and product name keep the historical `sm89` token so existing links stay valid; the
+# RTX 5060 Ti folder inside it is sm_120a.
 #
 # This fork is an sm_89 port: the attention wave geometry is a compile-time constant
 # (NINFER_TARGET_SM_COUNT, see CMakeLists.txt), so the RTX 4090 (128 SMs) and the RTX 4080 SUPER
@@ -45,10 +47,15 @@ $ChecksumPath = Join-Path $DistRoot "SHA256SUMS-v$ReleaseTag-sm89.txt"
 # `%~dp0ninfer-serve.exe`, so each profile carries its own pair inside its subdirectory; they
 # differ only in the prefill chunk the matching wave geometry wants.
 $AllVariants = @(
-    @{ Card = 'rtx4090'; Subdir = 'sm128-rtx4090'; SmCount = 128; BuildDirs = @('build-4090', 'build');
+    @{ Card = 'rtx4090'; Subdir = 'sm128-rtx4090'; Arch = '89'; SmCount = 128; BuildDirs = @('build-4090', 'build');
+       Models = 'Bonsai, Qwen3.8'; Note = '';
        Launchers = @('start-bonsai-rtx4090.bat', 'start-qwen38-rtx4090.bat') },
-    @{ Card = 'rtx4080s'; Subdir = 'sm80-rtx4080s'; SmCount = 80; BuildDirs = @('build-4080s');
-       Launchers = @('start-bonsai-rtx4080s.bat', 'start-qwen38-rtx4080s.bat') }
+    @{ Card = 'rtx4080s'; Subdir = 'sm80-rtx4080s'; Arch = '89'; SmCount = 80; BuildDirs = @('build-4080s');
+       Models = 'Bonsai, Qwen3.8'; Note = '';
+       Launchers = @('start-bonsai-rtx4080s.bat', 'start-qwen38-rtx4080s.bat') },
+    @{ Card = 'rtx5060ti'; Subdir = 'sm36-rtx5060ti'; Arch = '120a'; SmCount = 36; BuildDirs = @('build-5060ti');
+       Models = 'Bonsai'; Note = 'Bonsai only: the Qwen3.8-27B weights do not fit in 16 GB, so this folder ships the Bonsai launcher alone.'
+       Launchers = @('start-bonsai-rtx5060ti.bat') }
 )
 $Variants = @($AllVariants | Where-Object { $Cards -contains $_.Card })
 
@@ -83,18 +90,21 @@ function Find-Product {
     throw "Missing release product: $($Product.Candidates -join ' or ') under $BuildRoot"
 }
 
-# Guard against shipping a mislabeled dual-SM bundle: the two profiles differ only by this
+# Guard against shipping a mislabeled bundle: the profiles differ by target architecture and by this
 # constant, so a wrong pairing is invisible after the fact. compile_commands.json always exists
 # because CMAKE_EXPORT_COMPILE_COMMANDS is ON.
-function Assert-SmProfile {
-    param([string]$BuildRoot, [int]$SmCount, [string]$Card)
+function Assert-Profile {
+    param([string]$BuildRoot, [string]$Arch, [int]$SmCount, [string]$Card)
     $compileCommands = Join-Path $BuildRoot 'compile_commands.json'
     if (-not (Test-Path -LiteralPath $compileCommands)) {
-        Write-Warning "No compile_commands.json under $BuildRoot; skipping the SM profile check for $Card"
+        Write-Warning "No compile_commands.json under $BuildRoot; skipping the profile check for $Card"
         return
     }
     if (-not (Select-String -LiteralPath $compileCommands -Pattern "NINFER_TARGET_SM_COUNT=$SmCount" -SimpleMatch -Quiet)) {
         throw "Build $BuildRoot does not carry NINFER_TARGET_SM_COUNT=$SmCount; refusing to label it $Card"
+    }
+    if (-not (Select-String -LiteralPath $compileCommands -Pattern "compute_$Arch" -SimpleMatch -Quiet)) {
+        throw "Build $BuildRoot was not compiled for sm_$Arch; refusing to label it $Card"
     }
 }
 
@@ -104,7 +114,7 @@ function Assert-SmProfile {
 $ResolvedRoots = @{}
 foreach ($variant in $Variants) {
     $buildRoot = Resolve-BuildRoot -Variant $variant
-    Assert-SmProfile -BuildRoot $buildRoot -SmCount $variant.SmCount -Card $variant.Card
+    Assert-Profile -BuildRoot $buildRoot -Arch $variant.Arch -SmCount $variant.SmCount -Card $variant.Card
     foreach ($product in $Products) {
         [void](Find-Product -BuildRoot $buildRoot -Product $product)
     }
@@ -155,7 +165,7 @@ foreach ($variant in $Variants) {
     }
 
     # The repository VERSION is the product-level tag; stamp each profile with the tag and the card
-    # it actually is, so the launcher badge distinguishes the two directories of one archive.
+    # it actually is, so the launcher badge distinguishes the directories of one archive.
     Set-Content -LiteralPath (Join-Path $variantRoot 'VERSION') -Value "$ReleaseTag-$($variant.Card)" -Encoding ascii
 }
 
@@ -170,48 +180,59 @@ foreach ($doc in @('ninfer-windows-build-manual.md')) {
     }
 }
 
-# The archive may carry one or both profiles (see -Cards), so the folder table and the example
-# launcher line are generated from the selected variants rather than hardcoded.
+# The archive may carry any subset of the three profiles (see -Cards), so the folder table, the
+# profile list and the example launcher line are generated from the selected variants.
 $profileTable = ($Variants | ForEach-Object {
-    '| `' + $_.Subdir + '/` | ' + $_.Card + ' | ' + $_.SmCount + ' |'
+    '| `' + $_.Subdir + '/` | ' + $_.Card + ' | ' + $_.SmCount + ' | ' + $_.Models + ' |'
 }) -join "`r`n"
+$noteLines = ($Variants | Where-Object { $_.Note } | ForEach-Object {
+    '- `' + $_.Subdir + '/`: ' + $_.Note
+}) -join "`r`n"
+if (-not $noteLines) {
+    $noteLines = 'Every profile in this archive runs both models.'
+}
 $exampleLauncher = (Join-Path $Variants[0].Subdir $Variants[0].Launchers[0])
+$profileList = ($Variants | ForEach-Object {
+    $_.Card + ' (`sm_' + $_.Arch + '`, ' + $_.SmCount + ' SMs)'
+}) -join ', '
 if ($Variants.Count -eq 1) {
-    $profileSentence = 'This archive carries the compile-time SM profile for ' + $Variants[0].Card +
-        ' of the sm_89 port. Run the launcher for your model from inside that folder'
+    $profileSentence = 'This archive carries the compile-time profile for ' + $profileList +
+        '. Run the launcher for your model from inside that folder'
     $foldersWord = 'The folder'
     $containWord = 'contains'
 } else {
-    $profileSentence = 'This archive carries both compile-time SM profiles of the sm_89 port. ' +
-        'Pick the folder that matches your card, then run the launcher for your model from inside that folder'
-    $foldersWord = 'Both folders'
+    $profileSentence = 'This archive carries ' + $Variants.Count + ' compile-time profiles: ' +
+        $profileList + '. Pick the folder that matches your card, then run the launcher for your model from inside that folder'
+    $foldersWord = 'The folders'
     $containWord = 'contain'
 }
 $readme = @'
-# NInfer sm_89 - native Windows bundle (__TAG__)
+# NInfer - native Windows bundle (__TAG__)
 
-__PROFILE_SENTENCE__ (they resolve
+__PROFILE_SENTENCE__ (each launcher resolves
 `%~dp0ninfer-serve.exe`), passing the model path as the first argument:
 
     __EXAMPLE_LAUNCHER__ D:\models\bonsai2_27b_vl_mtp_q4q5.ninfer
 
-Each profile folder ships its own `start-bonsai-rtx<card>.bat` and `start-qwen38-rtx<card>.bat`; the
-4090 and 4080 SUPER pairs differ only in `--prefill-chunk`.
+Each profile folder ships the launchers for the models its card fits; the pairs differ only in
+`--prefill-chunk`.
+
+__NOTES__
 
 A directory containing a single `.ninfer` file works too. Without an argument the launcher falls
 back to `NINFER_MODEL`, then `NINFER_MODEL_DIR`, then a default file name under `models\`.
 
-| Folder | Cards | NINFER_TARGET_SM_COUNT |
-| --- | --- | --- |
+| Folder | Card | NINFER_TARGET_SM_COUNT | Models |
+| --- | --- | --- | --- |
 __PROFILE_TABLE__
 
 __FOLDERS_WORD__ __CONTAIN_WORD__ `ninfer.exe`, `ninfer-serve.exe`, `ninfer-perplexity.exe` and the vcpkg
-runtime DLLs. The profiles differ only in the attention wave geometry constant; 128 matches the
-RTX 4090 the project is tuned on. Either binary runs on either card, but the matching profile
-avoids the attention tail-wave tax.
+runtime DLLs. The profiles differ in the target architecture (`sm_89` against `sm_120a`) and in the
+attention wave geometry constant. A binary only runs on the architecture it was built for; within
+one architecture, the matching SM profile avoids the attention tail-wave tax.
 
 - `WINDOWS_PORT.md` - what this native Windows port changes and the verified performance.
-- `ninfer-windows-build-manual.md` - how the Windows sm_89 build is configured (128/80 SM).
+- `ninfer-windows-build-manual.md` - how the Windows build is configured (128/80/36 SM, `sm_89`/`sm_120a`).
 - `SHA256SUMS.txt` - hashes of every file in this bundle; the archive hash is in
   `SHA256SUMS-v__TAG__-sm89.txt` next to the download.
 
@@ -222,6 +243,7 @@ $readme.Replace('__TAG__', $ReleaseTag).
     Replace('__PROFILE_SENTENCE__', $profileSentence).
     Replace('__EXAMPLE_LAUNCHER__', $exampleLauncher).
     Replace('__PROFILE_TABLE__', $profileTable).
+    Replace('__NOTES__', $noteLines).
     Replace('__FOLDERS_WORD__', $foldersWord).
     Replace('__CONTAIN_WORD__', $containWord) |
     Set-Content -LiteralPath (Join-Path $ProductRoot 'README.md') -Encoding ascii

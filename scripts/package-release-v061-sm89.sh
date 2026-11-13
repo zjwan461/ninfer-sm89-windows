@@ -3,7 +3,7 @@
 #
 # This fork is delivered on Windows, so the Windows script is the one that ships. This script
 # packages the equivalent sm_89 Linux builds (the upstream fork's native platform) with the same
-# two-profile layout, and exists so the scripts/ .bat/.ps1 pairs stay symmetric --
+# per-profile layout, and exists so the scripts/ .bat/.ps1 pairs stay symmetric --
 # scripts/check-linux-scripts.sh fails when a .ps1 has no executable .sh counterpart.
 #
 # Pack-only: it assembles existing verified builds and fails when a build directory or product is
