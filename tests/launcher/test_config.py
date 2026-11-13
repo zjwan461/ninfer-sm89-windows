@@ -273,16 +273,16 @@ def test_split_extra_args(text: str, expected: list[str]) -> None:
 
 
 def test_engine_identity_prefers_variant_version(tmp_path: Path) -> None:
-    variant = tmp_path / "dist" / "ninfer-sm89-windows-x64-0.6.1" / "sm80-rtx4080s"
+    variant = tmp_path / "dist" / "ninfer-sm89-windows-x64-0.7.0" / "sm80-rtx4080s"
     variant.mkdir(parents=True)
-    (variant / "VERSION").write_text("0.6.1-rtx4080s\n", encoding="utf-8")
+    (variant / "VERSION").write_text("0.7.0-rtx4080s\n", encoding="utf-8")
     exe = variant / "ninfer-serve.exe"
     exe.write_bytes(b"x")
-    assert config.engine_identity(str(exe)) == "0.6.1-rtx4080s"
+    assert config.engine_identity(str(exe)) == "0.7.0-rtx4080s"
 
 
-def test_engine_identity_never_reports_upstream_tag(tmp_path: Path) -> None:
-    """build 目录没有 VERSION 时退化为目录名，不能拿仓库根的 0.6.1-rtx3090。"""
+def test_engine_identity_falls_back_to_build_dir(tmp_path: Path) -> None:
+    """build 目录没有 VERSION 时退化为目录名，不拿仓库级标签充数。"""
 
     apps = tmp_path / "build-4080s" / "apps"
     apps.mkdir(parents=True)
@@ -290,7 +290,7 @@ def test_engine_identity_never_reports_upstream_tag(tmp_path: Path) -> None:
     exe.write_bytes(b"x")
     identity = config.engine_identity(str(exe))
     assert identity == "build-4080s"
-    assert "rtx3090" not in identity
+    assert identity != "0.7.0-sm89"
 
 
 def test_engine_identity_empty_without_engine() -> None:

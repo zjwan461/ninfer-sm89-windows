@@ -464,13 +464,13 @@ def launcher_home() -> Path:
 
 
 def engine_identity(engine_binary: str | None) -> str:
-    """引擎的构建标识（界面角标用），绝不拿上游 VERSION 冒充本 fork 的构建。
+    """引擎的构建标识（界面角标用）：显示二进制实际来自哪个包/档位，而不是仓库标签。
 
-    仓库根的 ``VERSION`` 按 ``scripts/package-release-*.ps1`` 的注释就是上游 RTX 3090 的
-    标签，因此这里只认三种来源：
+    仓库根的 ``VERSION`` 是产品级标签（``0.7.0-sm89``），一个源码树里的二进制无法从它推出
+    自己属于哪个档位，因此这里只认三种来源：
 
-    1. 引擎同目录的 ``VERSION``（``dist/.../sm80-rtx4080s/VERSION`` → ``0.6.1-rtx4080s``）；
-    2. ``dist/<包>/VERSION``（产品级标签 ``0.6.1-sm89``），且引擎确实位于该 dist 包内；
+    1. 引擎同目录的 ``VERSION``（``dist/.../sm80-rtx4080s/VERSION`` → ``0.7.0-rtx4080s``）；
+    2. ``dist/<包>/VERSION``（产品级标签 ``0.7.0-sm89``），且引擎确实位于该 dist 包内；
     3. 都不匹配时退化为构建目录名（``build-4080s``），不臆造版本号。
     """
 

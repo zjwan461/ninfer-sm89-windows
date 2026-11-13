@@ -146,7 +146,7 @@ def build_app(store: config.Store, ui_port: int) -> FastAPI:
     async def schema() -> dict[str, Any]:
         settings = store.settings
         return {
-            # 引擎构建标识（不是仓库根的 VERSION：那是上游 RTX 3090 的标签）。
+            # 引擎构建标识：卖的是二进制来自哪个档位，不是仓库级版本标签。
             "build": config.engine_identity(settings["engine_binary"]),
             "ui_port": settings["ui_port"],
             "groups": [{"id": gid, "title": title} for gid, title in config.GROUPS],

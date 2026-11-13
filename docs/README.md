@@ -9,7 +9,7 @@ time on native Windows: `sm_89` (RTX 4090 or RTX 4080 SUPER) or `sm_120a` (RTX 5
 | Document | Purpose |
 |---|---|
 | [Native Windows port](../WINDOWS_PORT.md) | Windows build details, Qwen3.8 measurements and experiments on the RTX 4090 |
-| [Prebuilt releases](https://github.com/zjwan461/ninfer-sm89-windows/releases) | Windows x64 binaries with DLLs, launchers and licenses |
+| [Prebuilt releases](https://github.com/zjwan461/ninfer-sm89-windows/releases) | Windows x64 binaries with DLLs, launchers and licenses; `sm_89` only (RTX 4090, RTX 4080 SUPER) |
 | [CLI](cli.md) | text, chat-history, image/video input, output streams, sampling, MTP, and common runtime options |
 | [HTTP serving](serving.md) | OpenAI Responses/Chat Completions, Anthropic Messages, state, streaming, token counting, authentication, and tool calls |
 | [Launcher (WebUI)](launcher.md) | local WebUI that configures serve flags, starts/stops the server, and shows logs, monitor stats and a built-in test request |

@@ -1,3 +1,7 @@
+> Historical record: the working handoff of the 2026-09 performance session, kept because
+> `bonsai-ternary-design.md` cites its sections. It is not a current plan; current state is
+> `RELEASE_NOTES_0.7.0.md` and the README.
+
 # Traspaso: trabajo de rendimiento de NInfer en la RTX 4090 (Bonsai y Qwen3.8)
 
 Este documento es para la sesión de Claude Code que trabaja en el PC del usuario (Windows, RTX 4090).

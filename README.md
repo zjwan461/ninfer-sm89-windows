@@ -106,8 +106,13 @@ not part of that budget.
 [latest release](https://github.com/zjwan461/ninfer-sm89-windows/releases/latest) and unzip it.
 It needs only an NVIDIA driver 595 or newer and the
 [VC++ 2015-2022 x64 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe): the CUDA
-runtime is built into the executables, and the zip includes the DLLs, two server launchers and
-the licenses. Skip to step 2.
+runtime is built into the executables, and the zip includes the DLLs, a launcher pair per
+profile and the licenses. Skip to step 2.
+
+The archive carries two compile-time profiles, `sm128-rtx4090/` and `sm80-rtx4080s/`, both built
+for `sm_89`. The **RTX 5060 Ti 16 GB** (`sm_120a`, 36 SMs) is not in that archive, because a
+binary built for `sm_89` cannot load on it: build that card from source with
+`-DCMAKE_CUDA_ARCHITECTURES=120a -DNINFER_TARGET_SM_COUNT=36`.
 
 **Or build from source** from a "x64 Native Tools" prompt (or after running `vcvars64.bat`) with
 CUDA on `PATH`:
@@ -611,15 +616,18 @@ The full protocol reference, including every field and error code, is in
   builds it is also disabled on `sm_120a`: MSVC cannot pass the 128-byte-aligned `CUtensorMap`
   kernel parameter (C2719), so the W4A4 TMA launchers are excluded
   (`NINFER_BUILD_NVFP4_TMA=OFF`) and A4 artifacts fall back to A16 activations.
-- This branch is developed and validated on Windows. The Linux build and `Dockerfile` are
-  inherited from the upstream 4090 port and are not re-validated here; see
-  [docs/rtx-3090-linux.md](docs/rtx-3090-linux.md) with `CMAKE_CUDA_ARCHITECTURES=89`.
+- This branch is developed and validated on Windows 11 with the three consumer cards above. The
+  `Dockerfile` builds the Linux `sm_89` profile and is inherited code that this fork does not
+  validate. The RTX 3090 `sm_86` material belongs to the upstream
+  [Don-Chad/ninfer-3090](https://github.com/Don-Chad/ninfer-3090) line and is not part of this
+  fork: `CMakeLists.txt` accepts only `89` and `120a`, so an `sm_86` tree does not configure.
 
 ## Documentation
 
 | Topic | Document |
 |---|---|
 | All documentation | [docs/README.md](docs/README.md) |
+| This fork's release notes (v0.7.0) | [RELEASE_NOTES_0.7.0.md](RELEASE_NOTES_0.7.0.md) |
 | CLI options | [docs/cli.md](docs/cli.md) |
 | HTTP server and protocols | [docs/serving.md](docs/serving.md) |
 | Windows build, Qwen3.8 measurements and experiments | [WINDOWS_PORT.md](WINDOWS_PORT.md) |

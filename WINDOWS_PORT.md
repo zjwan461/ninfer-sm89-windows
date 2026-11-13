@@ -132,9 +132,8 @@ Products: `build/apps/ninfer.exe`, `build/apps/ninfer-serve.exe`,
 This branch reads both **v2** (`NINFER\0\2`) and **v3** (`NINFER\0\3`) `.ninfer`
 artifacts — the reader auto-detects the container version from the magic bytes, no build
 flag needed. HuggingFace repos originally shipped v2 and have since migrated their `main`
-to v3; either works here now. See
-[docs/artifact-v3-port-notes.md](docs/artifact-v3-port-notes.md) for what v3 changed and
-how this port reads it.
+to v3; either works here now. Both framings are read by the same artifact reader, so no
+conversion step is required.
 
 If you're on the `winport-v2` branch instead (plain Windows port, no v3 support), that
 build only reads v2 and rejects v3 with `artifact magic is not NInfer v2` — download a v2

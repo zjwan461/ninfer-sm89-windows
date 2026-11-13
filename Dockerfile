@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
 
+# Linux container for the 128-SM sm_89 (RTX 4090) profile. Windows is this fork's delivered
+# platform; the container is inherited code that the fork does not validate, and it deliberately
+# pins both build options the engine now requires instead of relying on their defaults.
+
 FROM nvidia/cuda:13.1.2-devel-ubuntu24.04 AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -20,6 +24,8 @@ COPY . .
 
 RUN cmake -S . -B /build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CUDA_ARCHITECTURES=89 \
+        -DNINFER_TARGET_SM_COUNT=128 \
         -DNINFER_BUILD_APPS=ON \
         -DBUILD_TESTING=OFF \
         -DNINFER_BUILD_BENCHMARKS=OFF \

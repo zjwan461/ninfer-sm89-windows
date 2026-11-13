@@ -9,9 +9,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Fork-local release packager for the native Windows sm_89 port.
-# Mirrors scripts\package-release-v060.ps1, but targets this fork's Ninja build trees instead of
-# the upstream RTX 3090 MSVC trees (build-sm86-*), and bundles both compile-time SM profiles.
+# Fork-local release packager for the native Windows port.
+# Targets this fork's Ninja build trees (build/, build-4080s/, build-5060ti/) and bundles the two
+# sm_89 compile-time SM profiles. The RTX 5060 Ti is sm_120a and has no packager here.
 #
 # This fork is an sm_89 port: the attention wave geometry is a compile-time constant
 # (NINFER_TARGET_SM_COUNT, see CMakeLists.txt), so the RTX 4090 (128 SMs) and the RTX 4080 SUPER
@@ -32,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 # A Bash counterpart (package-release-v061-sm89.sh) packages the Linux sm_89 builds so the
 # scripts\ pairs stay symmetric (scripts\check-linux-scripts.sh enforces that).
 
-$ReleaseTag = '0.6.1'
+$ReleaseTag = '0.7.0'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $DistRoot = Join-Path $RepoRoot 'dist'
 $ProductName = "ninfer-sm89-windows-x64-$ReleaseTag"
@@ -154,8 +154,8 @@ foreach ($variant in $Variants) {
         }
     }
 
-    # VERSION in the repository reports the upstream RTX 3090 tag; stamp each profile with the tag
-    # and card it actually is.
+    # The repository VERSION is the product-level tag; stamp each profile with the tag and the card
+    # it actually is, so the launcher badge distinguishes the two directories of one archive.
     Set-Content -LiteralPath (Join-Path $variantRoot 'VERSION') -Value "$ReleaseTag-$($variant.Card)" -Encoding ascii
 }
 

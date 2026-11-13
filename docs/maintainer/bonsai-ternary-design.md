@@ -25,7 +25,7 @@ benches), `tests/README.md`.
 | Speculation | Keep MTP (and DFlash2 later). The MTP head is NOT in the Bonsai GGUF; it is the BF16 head of Qwen3.8-27B and is copied from the existing artifact `E:\LLM\qwen3_8_27b.ninfer`. The residual stream is never rotated, so the original MTP head applies unchanged (this is exactly what bonsai-vllm does). |
 | Goal | Decode memory-bound on ~5.6 GB of ternary weights per token with CUDA graphs and MTP; parity with the PrismML llama.cpp fork on quality; beat its 81.2 tok/s (RTX 4090, PQ2_0, no speculation) by a wide margin. |
 
-Build/test on Windows: configure with the flags in `winport_configure.bat` (VS 18 BuildTools
+Build/test on Windows: configure with the flags in `ninfer-windows-build-manual.md` (VS 18 BuildTools
 `vcvars64`, CUDA v13.4, vcpkg `E:/LLM/vcpkg`, triplet `x64-windows`, `-DBUILD_TESTING=ON`) into
 `E:\LLM\ninfer-4090-bonsai\build` (already configured). Build single targets with
 `ninja -C E:\LLM\ninfer-4090-bonsai\build <target>` from a `vcvars64` shell (run `.bat` files from
@@ -1767,8 +1767,8 @@ Next steps, in order:
        three-lane aggregate against 166.9 tok/s and 37.09 ms per round, the one-request rate
        against 143.6 tok/s and 14.49 ms; plus an nsys round profile at three lanes (t5 kernel
        time per round against the ~29 ms estimate).
-14. Validation of the integrated branch (HANDOFF.md section 4). Build at `1515b53`, the same
-    code as HEAD `61a8fcd`, which only adds HANDOFF.md. Measured 2026-09-25, RTX 4090 at 60
+14. Validation of the integrated branch (docs/maintainer/handoff-2026-09.md section 4). Build at `1515b53`, the same
+    code as HEAD `61a8fcd`, which only adds the session handoff. Measured 2026-09-25, RTX 4090 at 60
     Hz, server off. The previous binaries (`19d7567`) were kept in `build_19d7567\` for the
     comparisons.
     - Build: `cmake --build build -j` completes (399 steps, MSVC + CUDA 13.4).
@@ -1929,7 +1929,7 @@ Next steps, in order:
         tokens, and those rounds commit a quarter of the tokens.
       - At cap 64 the projection falls again, because the wider verification costs more.
 
-      For the HANDOFF section 8 idea 4, the replay favours phase 1 (up to 15 drafts). It does
+      For the handoff section 8 idea 4, the replay favours phase 1 (up to 15 drafts). It does
       not justify widths past 16 on this data.
     - Prefill attention diagnosis (`e319660`), no code change.
       - Command: `ncu --set full --import-source yes --kernel-name
@@ -1984,7 +1984,7 @@ Next steps, in order:
         SM (registers and shared memory each allow one), nothing hides the barrier waits.
       - The spills cost little time (<= 1.8 % of samples) despite ~100 M executed spill
         instructions. In rk4v4-e8 only 25 % of their local loads hit L1.
-15. Configuration choices approved from HANDOFF.md section 8 (2026-09-25, build `1515b53`
+15. Configuration choices approved from docs/maintainer/handoff-2026-09.md section 8 (2026-09-25, build `1515b53`
     code, RTX 4090 at 60 Hz).
     - Bonsai MTP layer, Q4/Q5 mix against Q8. Q8 and the mix alternated twice (Q8, mix, Q8,
       mix) on the six prompts: MTP 2, `--lm-head-draft`, greedy, 512 new tokens.
@@ -2002,7 +2002,7 @@ Next steps, in order:
     - Qwen3.8 launcher (MTP 3 with CUDA graphs against DFlash2 d6 without graphs): a tie at
       steady state (108.9 against 108.7 tok/s), so it is not adopted; details in WINDOWS_PORT.md.
 16. N-gram phase 1, stage 1: the MTP verify window `V` split from the proposal depth `k`
-    (HANDOFF.md section 8 idea 4; plan in `docs/maintainer/ngram-speculation-plan.md`).
+    (handoff-2026-09.md section 8 idea 4; plan in `docs/maintainer/ngram-speculation-plan.md`).
     - Scope: the MTP decode buffers, envelopes, workspace, ReplaySSM records and
       `mtp_prepare_next_round` take `V` (up to 15 drafts, width 16). The MTP proposal, its KV
       end and page slack keep `k`. A round of width `W` uses exact `[W,B]` views, and the

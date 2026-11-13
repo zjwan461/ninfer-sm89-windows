@@ -4,7 +4,7 @@
 > 前置：只需要 **Visual Studio 2022 + CUDA Toolkit**；唯一的额外软件 **vcpkg** 由 §3 第 0 步安装。
 > 约定：本手册用占位符与环境变量，不与任何机器绑定——
 > `<repo>` 源码目录、`<vcpkg-root>` vcpkg 安装目录、`<cuda-path>` CUDA 安装目录、`<model-dir>` 模型目录、`<vcvars64.bat>` VS 的编译环境脚本。
-> 配套文档：`README.md`、`WINDOWS_PORT.md`、`docs/maintainer/build-system.md`、`ninfer-4080s-80sm-retarget-plan.md`。
+> 配套文档：`README.md`、`WINDOWS_PORT.md`、`docs/maintainer/build-system.md`、`RELEASE_NOTES_0.7.0.md`。
 > 想看占位符在一台真实机器上填什么、以及**填好值的完整命令**，见 §11（**示例，非要求**）。
 
 ---
@@ -55,7 +55,7 @@ cmake --build build-4080s -j
 - **用法 A（主推，最直观）**：不用 preset，直接敲完整 `-D` 命令（见 §3 第 3 步）。
 - **用法 B**：用具名 preset + 本机覆盖文件 `CMakeUserPresets.json`。
 
-> ⚠️ 仓库自带的 `winport_configure.bat` / `winport_build.bat` 是移植作者机器上的原始脚本，里面写死了其本机的 VS 安装目录与源码目录，**在别的机器上会失败**：请用本手册的命令，或自行改这两个脚本。
+> ⚠️ 本手册的命令是唯一的支持路径：仓库里没有写死作者本机路径的构建脚本。
 
 ---
 
@@ -447,7 +447,7 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
 
 产物（`dist/` 已被 `.gitignore` 忽略）：
 
-    dist\ninfer-sm89-windows-x64-0.6.1\
+    dist\ninfer-sm89-windows-x64-0.7.0\
       sm128-rtx4090\      exe + vcpkg DLL + VERSION + start-*.bat   （RTX 4090）
       sm80-rtx4080s\      exe + vcpkg DLL + VERSION + start-*-rtx4080s.bat  （RTX 4080 SUPER）
       README.md           哪张卡用哪个子目录
@@ -455,16 +455,16 @@ build-sm89.bat                    :: 默认 128 档，输出到 build-sm128
       ninfer-windows-build-manual.md
       LICENSE / VERSION
       SHA256SUMS.txt      包内所有文件的哈希
-    dist\ninfer-sm89-windows-x64-0.6.1.zip
-    dist\SHA256SUMS-v0.6.1-sm89.txt   zip 自身的哈希
+    dist\ninfer-sm89-windows-x64-0.7.0.zip
+    dist\SHA256SUMS-v0.7.0-sm89.txt   zip 自身的哈希
 
 要点：
 
-- **只打包，不编译**：缺构建目录或 exe 会直接报错，与上游 `scripts/package-release-v0x0.*` 定位一致。
+- **只打包，不编译**：缺构建目录或 exe 会直接报错，不在这里触发重编。
 - **档位自检**：打包前用 `compile_commands.json` 断言该目录确实是 `NINFER_TARGET_SM_COUNT=128/80`，防止把 80 档标成 4090。
 - 启动脚本**按档分两份**并放进**各自的子目录**（不是根目录）：`sm128-rtx4090\` 放 `start-*-rtx4090.bat`，`sm80-rtx4080s\` 放 `start-*-rtx4080s.bat`（脚本靠 `%~dp0ninfer-serve.exe` 找同目录的 exe，所以不能只放根目录一份）。
 - 启动脚本的模型路径是**参数**而非硬编码：`start-bonsai-rtx4080s.bat <model.ninfer>`；不给参数时依次取 `NINFER_MODEL` → `NINFER_MODEL_DIR\<默认文件名>` → `models\<默认文件名>`，模型之后的参数原样透传（另可用 `NINFER_SERVE_ARGS`、`NINFER_SERVER`）。
-- `VERSION` 由脚本写入：仓库根的 `VERSION` 是上游 3090 的标签，不适用于本包。
+- `VERSION` 由脚本按包写：仓库根的 `VERSION` 是产品级标签（`0.7.0-sm89`），包内每个档位再戳上自己的卡名（`0.7.0-rtx4080s`），界面角标读的就是它。
 - 孪生的 Bash 脚本 `scripts/package-release-v061-sm89.sh` 打 Linux 版（仓库要求每个 `.ps1` 都有 `.sh` 配对）。
 
 ---

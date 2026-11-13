@@ -18,7 +18,7 @@ Both numbers come from running **both builds on the same 4080 SUPER**.
 **Conclusion: the SM constant has no measurable effect on this card.** Decode is
 bandwidth-bound (8K context keeps attention small) and prefill came out identical at the
 chunk sizes measured, so the "attention tail-wave tax" that motivated
-`ninfer-4080s-80sm-retarget-plan.md` does not show up here. The retarget is still correct
+the 80-SM retarget does not show up here. The retarget is still correct
 to keep (it costs nothing and documents intent), but it should not be billed as a speed win.
 
 ## 2. Decode: where the time goes

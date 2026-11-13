@@ -1,5 +1,8 @@
 # NInfer-3090 v0.6.1
 
+> Release notes of the upstream RTX 3090 (`sm_86`) fork, kept for lineage. This tree no longer
+> builds `sm_86`; the current Windows release is [v0.7.0](RELEASE_NOTES_0.7.0.md).
+
 This release adds a Linux source and container build for the RTX 3090 and RTX 3090 Ti.
 It does not change model execution, artifact compatibility, or the qualified Windows performance profiles.
 

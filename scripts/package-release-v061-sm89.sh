@@ -6,11 +6,11 @@
 # two-profile layout, and exists so the scripts/ .bat/.ps1 pairs stay symmetric --
 # scripts/check-linux-scripts.sh fails when a .ps1 has no executable .sh counterpart.
 #
-# Pack-only, like v040/v050/v060: it assembles existing verified builds and fails when a build
-# directory or product is missing.
+# Pack-only: it assembles existing verified builds and fails when a build directory or product is
+# missing.
 set -euo pipefail
 
-release_tag='0.6.1'
+release_tag='0.7.0'
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 dist_root="$repo_root/dist"
 product_name="ninfer-sm89-linux-x64-$release_tag"
@@ -103,7 +103,8 @@ for index in "${!resolved_subdirs[@]}"; do
     cp -- "$library" "$variant_root/"
   done < <(find "$build_root/apps" -maxdepth 1 -name '*.so*' -type f -print0 2>/dev/null)
 
-  # VERSION reports the upstream RTX 3090 tag; stamp each profile with the tag and card it is.
+  # The repository VERSION is the product-level tag; stamp each profile with the tag and the SM
+  # profile it actually is.
   printf '%s\n' "$release_tag-$subdir" > "$variant_root/VERSION"
 done
 
