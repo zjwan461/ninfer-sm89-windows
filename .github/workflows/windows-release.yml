@@ -53,9 +53,18 @@ jobs:
           # stub's component list, which the action only partly supports on Windows.
           method: local
 
+      # The image does not run a VS developer prompt, so cl.exe is not on PATH and nvcc fails
+      # with "Cannot find compiler 'cl.exe'". This imports the x64 MSVC environment into every
+      # later step, and MinGW (present on the image) must not be picked up as the C/CXX compiler.
+      - name: Set up the MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Show toolchain versions
         shell: pwsh
         run: |
+          (Get-Command cl).Source
           nvcc --version
           cmake --version
           ninja --version
@@ -80,14 +89,20 @@ jobs:
           $toolchain = Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
 
           # The presets carry the build options; the toolchain path is per machine and stays here.
-          # Each preset is built to completion before the next one starts, so only one object tree
-          # of the three occupies disk at a time.
-          foreach ($preset in @('release', 'release-4080s', 'release-5060ti')) {
+          # Both compilers are pinned to cl.exe: the image also carries MinGW, and a GCC host
+          # compiler cannot drive nvcc on Windows.
+          $presets = @('release', 'release-4080s', 'release-5060ti')
+          foreach ($preset in $presets) {
             Write-Host "::group::configure $preset"
-            cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_TARGET_TRIPLET=x64-windows
+            cmake --preset $preset "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_TARGET_TRIPLET=x64-windows `
+              -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_CUDA_HOST_COMPILER=cl
             if ($LASTEXITCODE -ne 0) { throw "configure failed for $preset" }
             Write-Host "::endgroup::"
+          }
 
+          # Configure all three before building any: a bad preset then fails in minutes instead of
+          # after a completed build. One object tree is built at a time to limit peak disk use.
+          foreach ($preset in $presets) {
             Write-Host "::group::build $preset"
             cmake --build --preset $preset
             if ($LASTEXITCODE -ne 0) { throw "build failed for $preset" }
