@@ -102,20 +102,27 @@ not part of that budget.
 
 ### 1. Get the binaries
 
-**Prebuilt (easiest):** download `ninfer-sm89-windows-x64-<date>.zip` from the
+**Prebuilt (easiest):** download the archive for your card from the
 [latest release](https://github.com/zjwan461/ninfer-sm89-windows/releases/latest) and unzip it.
 It needs only an NVIDIA driver 595 or newer and the
 [VC++ 2015-2022 x64 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe): the CUDA
 runtime is built into the executables, and the zip includes the DLLs, a launcher pair per
 profile and the licenses. Skip to step 2.
 
-The 0.7.0 archive carries three compile-time profiles: `sm128-rtx4090/` and `sm80-rtx4080s/`
-(`sm_89`) and `sm36-rtx5060ti/` (`sm_120a`). Pick the folder that matches your card -- a binary
-built for one architecture cannot load on the other. The previously published 0.6.1 asset has only
-the two `sm_89` folders, so an RTX 5060 Ti owner downloading that one builds from source with
-`-DCMAKE_CUDA_ARCHITECTURES=120a -DNINFER_TARGET_SM_COUNT=36`. On the 16 GB card the qualified
-profile is Bonsai: the Qwen3.8-27B weights alone are 15.9 GiB, so `sm36-rtx5060ti/` ships the
-Bonsai launcher only.
+The 0.7.0 release ships one archive per architecture, because the three profiles together are
+above GitHub's 2 GiB release-asset cap:
+
+| Archive | Folder | Card |
+|---|---|---|
+| `ninfer-sm89-windows-x64-0.7.0.zip` | `sm128-rtx4090/` | RTX 4090 |
+| | `sm80-rtx4080s/` | RTX 4080 SUPER |
+| `ninfer-sm120-windows-x64-0.7.0.zip` | `sm36-rtx5060ti/` | RTX 5060 Ti 16 GB |
+
+A binary only runs on the architecture it was built for, so take the archive that matches your
+card. The 16 GB card is qualified on Bonsai only: the Qwen3.8-27B weights alone are 15.9 GiB, so
+its folder ships the Bonsai launcher. The earlier 0.6.1 asset has only the two `sm_89` folders; an
+RTX 5060 Ti owner using that one builds from source with `-DCMAKE_CUDA_ARCHITECTURES=120a
+-DNINFER_TARGET_SM_COUNT=36`.
 
 **Or build from source** from a "x64 Native Tools" prompt (or after running `vcvars64.bat`) with
 CUDA on `PATH`:

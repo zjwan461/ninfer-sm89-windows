@@ -12,8 +12,9 @@ $ErrorActionPreference = 'Stop'
 # Fork-local release packager for the native Windows port.
 # Targets this fork's Ninja build trees (build/, build-4080s/, build-5060ti/) and bundles the three
 # qualified compile-time profiles: RTX 4090 and RTX 4080 SUPER (sm_89), RTX 5060 Ti (sm_120a).
-# The archive and product name keep the historical `sm89` token so existing links stay valid; the
-# RTX 5060 Ti folder inside it is sm_120a.
+# One run packs one architecture: the sm_89 pair keeps the historical `sm89` product name, the
+# sm_120a card becomes `sm120`. Mixing them is rejected because the combined archive is over
+# GitHub's 2 GiB release-asset cap.
 #
 # This fork is an sm_89 port: the attention wave geometry is a compile-time constant
 # (NINFER_TARGET_SM_COUNT, see CMakeLists.txt), so the RTX 4090 (128 SMs) and the RTX 4080 SUPER
@@ -37,10 +38,6 @@ $ErrorActionPreference = 'Stop'
 $ReleaseTag = '0.7.0'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $DistRoot = Join-Path $RepoRoot 'dist'
-$ProductName = "ninfer-sm89-windows-x64-$ReleaseTag"
-$ProductRoot = Join-Path $DistRoot $ProductName
-$ArchivePath = Join-Path $DistRoot "$ProductName.zip"
-$ChecksumPath = Join-Path $DistRoot "SHA256SUMS-v$ReleaseTag-sm89.txt"
 
 # Per card: the subdirectory it occupies, the SM profile to verify, the build directories to look
 # for (newest name first), and the launcher pair that profile ships. The launchers resolve
@@ -58,6 +55,26 @@ $AllVariants = @(
        Launchers = @('start-bonsai-rtx5060ti.bat') }
 )
 $Variants = @($AllVariants | Where-Object { $Cards -contains $_.Card })
+if ($Variants.Count -eq 0) {
+    throw "None of -Cards ($($Cards -join ', ')) is a known card"
+}
+
+# GitHub caps a release asset at 2 GiB and the three profiles together are above that, so one
+# archive carries one target architecture. The sm_89 archive keeps its historical name; the
+# sm_120a one is its own product.
+$ArchSet = ($Variants | ForEach-Object { $_.Arch } | Sort-Object -Unique) -join ','
+switch ($ArchSet) {
+    '89'   { $ArchToken = 'sm89' }
+    '120a' { $ArchToken = 'sm120' }
+    default {
+        throw "Cards of different architectures cannot share one archive (got $ArchSet); " +
+              "run the script once per architecture, e.g. -Cards rtx4090,rtx4080s and -Cards rtx5060ti"
+    }
+}
+$ProductName = "ninfer-$ArchToken-windows-x64-$ReleaseTag"
+$ProductRoot = Join-Path $DistRoot $ProductName
+$ArchivePath = Join-Path $DistRoot "$ProductName.zip"
+$ChecksumPath = Join-Path $DistRoot "SHA256SUMS-v$ReleaseTag-$ArchToken.txt"
 
 # Ninja (single config) puts the products directly in apps\; the apps\Release\ candidates keep the
 # script working under a multi-config generator. ninfer-perplexity.exe replaces the 3090 bundle's
@@ -170,7 +187,7 @@ foreach ($variant in $Variants) {
 }
 
 # --- Shared root files -------------------------------------------------------
-Set-Content -LiteralPath (Join-Path $ProductRoot 'VERSION') -Value "$ReleaseTag-sm89" -Encoding ascii
+Set-Content -LiteralPath (Join-Path $ProductRoot 'VERSION') -Value "$ReleaseTag-$ArchToken" -Encoding ascii
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'LICENSE') -Destination $ProductRoot
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'WINDOWS_PORT.md') -Destination $ProductRoot
 foreach ($doc in @('ninfer-windows-build-manual.md')) {
@@ -234,12 +251,13 @@ one architecture, the matching SM profile avoids the attention tail-wave tax.
 - `WINDOWS_PORT.md` - what this native Windows port changes and the verified performance.
 - `ninfer-windows-build-manual.md` - how the Windows build is configured (128/80/36 SM, `sm_89`/`sm_120a`).
 - `SHA256SUMS.txt` - hashes of every file in this bundle; the archive hash is in
-  `SHA256SUMS-v__TAG__-sm89.txt` next to the download.
+  `SHA256SUMS-v__TAG__-__ARCH__.txt` next to the download.
 
 Model artifacts are not included. Download the `.ninfer` artifact for your model from the
 repositories linked in the project README, and verify its published SHA-256 separately.
 '@
 $readme.Replace('__TAG__', $ReleaseTag).
+    Replace('__ARCH__', $ArchToken).
     Replace('__PROFILE_SENTENCE__', $profileSentence).
     Replace('__EXAMPLE_LAUNCHER__', $exampleLauncher).
     Replace('__PROFILE_TABLE__', $profileTable).
@@ -259,7 +277,11 @@ $innerHashes = Get-ChildItem -LiteralPath $ProductRoot -Recurse -File |
     }
 $innerHashes | Set-Content -LiteralPath (Join-Path $ProductRoot 'SHA256SUMS.txt') -Encoding ascii
 
-Compress-Archive -LiteralPath $ProductRoot -DestinationPath $ArchivePath -CompressionLevel Optimal
+# ZipFile rather than Compress-Archive: the latter refuses archives near 2 GB, and this bundle is
+# most of the way there. includeBaseDirectory keeps the product folder as the archive root.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $ProductRoot, $ArchivePath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
 $archiveHash = Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256
 "$($archiveHash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $ArchivePath)" |
     Set-Content -LiteralPath $ChecksumPath -Encoding ascii

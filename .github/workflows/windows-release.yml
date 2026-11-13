@@ -1,7 +1,7 @@
 name: Windows release
 
-# Builds the three qualified compile-time profiles on a v* tag or on demand, and assembles the
-# release zip for both. A push to main deliberately does not build: the two paths would queue in
+# Builds the three qualified compile-time profiles on a v* tag or on demand, and assembles one
+# release archive per target architecture (sm_89: 4090 + 4080 SUPER, sm_120a: 5060 Ti). A push to main deliberately does not build: the two paths would queue in
 # the same concurrency group and double the wait, so a manual dispatch is the way to check main.
 # The hosted runner has no GPU, so this job proves the tree configures, compiles and links for
 # sm_89 (128/80 SMs) and sm_120a (36 SMs); kernel correctness still comes from `ctest` on a
@@ -25,7 +25,9 @@ permissions:
   contents: write
 
 env:
-  CUDA_VERSION: 12.8.0
+  # 13.x is the line the fork is validated on (13.4); 12.8 is the CMake floor and the first
+  # release with sm_120a, so anything in between would also satisfy the build.
+  CUDA_VERSION: 13.3.1
   # One vcpkg install tree and one binary cache shared by the three configure steps: ffmpeg and
   # curl are built once, then extracted for the other two profiles.
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}\vcpkg_installed
@@ -44,11 +46,12 @@ jobs:
         run: Get-PSDrive C | Select-Object @{ Name = 'FreeGB'; Expression = { [math]::Round($_.Free / 1GB, 1) } }
 
       - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.19
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          # CUDA 12.8 is the floor CMakeLists.txt enforces and the first release with sm_120a.
           cuda: ${{ env.CUDA_VERSION }}
-          method: network
+          # The full local installer is slower than the network stub but does not depend on the
+          # stub's component list, which the action only partly supports on Windows.
+          method: local
 
       - name: Show toolchain versions
         shell: pwsh
@@ -96,7 +99,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\package-release-v061-sm89.ps1 -Cards @('rtx4090', 'rtx4080s', 'rtx5060ti')
+          # One archive per architecture: the three profiles together exceed GitHub's 2 GiB
+          # release-asset cap. The sm_89 pair keeps the historical `sm89` name, the RTX 5060 Ti
+          # ships as its own `sm120` product.
+          & .\scripts\package-release-v061-sm89.ps1 -Cards @('rtx4090', 'rtx4080s')
+          & .\scripts\package-release-v061-sm89.ps1 -Cards @('rtx5060ti')
           Get-ChildItem dist -File | Select-Object Name, Length
 
       - name: Upload the archive

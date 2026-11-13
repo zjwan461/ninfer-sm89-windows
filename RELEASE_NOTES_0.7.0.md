@@ -12,9 +12,11 @@ serving protocol are unchanged.
 | RTX 4080 SUPER 16/32 GB | `sm_89` | 80 | prebuilt, `sm80-rtx4080s/` |
 | RTX 5060 Ti 16 GB | `sm_120a` | 36 | prebuilt, `sm36-rtx5060ti/` (Bonsai only) |
 
-One archive carries all three, one folder per card; a binary only runs on the architecture it was
-built for. The 16 GB card is qualified on Bonsai: the Qwen3.8-27B weights alone are 15.9 GiB, so
-its folder ships one launcher.
+Two archives, one per architecture: `ninfer-sm89-windows-x64-0.7.0.zip` carries the RTX 4090 and
+RTX 4080 SUPER folders, `ninfer-sm120-windows-x64-0.7.0.zip` the RTX 5060 Ti one. They are split
+because the three profiles together exceed GitHub's 2 GiB release-asset cap, and a binary only
+runs on the architecture it was built for. The 16 GB card is qualified on Bonsai: the Qwen3.8-27B
+weights alone are 15.9 GiB, so its folder ships one launcher.
 The RTX 3090 (`sm_86`) port belongs to the upstream [Don-Chad/ninfer-3090] line; this tree accepts
 only `89` and `120a` and does not build `sm_86`.
 
@@ -44,8 +46,8 @@ only `89` and `120a` and does not build `sm_86`.
   for all three profiles, and `start-launcher.bat` configures and supervises `ninfer-serve.exe`
   from a browser form, shipping the launcher profiles as presets.
 - **Windows release CI.** `.github/workflows/windows-release.yml` builds the three presets on a
-  hosted Windows runner, packages them with the repository's own script, uploads the archive as a
-  build artifact and attaches it to a `v*` tag's release. The runner has no GPU, so it proves the
+  hosted Windows runner, packages one archive per architecture with the repository's own script,
+  uploads both as build artifacts and attaches them to a `v*` tag's release. The runner has no GPU, so it proves the
   tree configures, compiles and links; kernel correctness still comes from `ctest` on a card.
 - **One release packager.** `scripts/package-release-v061-sm89.ps1` (and its Bash counterpart)
   replaces the upstream v0.4.0-v0.6.0 packagers; the older scripts and the `sm_86` Linux guide are
@@ -63,5 +65,5 @@ and CUDA test suite is unchanged: `ctest --test-dir build --output-on-failure` a
 - One card per build and per process. A binary built for one architecture does not load on the
   other, and one built for the wrong SM count only loses wave utilization -- it stays correct.
 - The Linux `Dockerfile` builds the 128-SM `sm_89` profile and is not validated by this fork.
-- The `sm89` token in the archive name is historical: the archive also carries the `sm_120a`
-  profile.
+- The `sm89` archive name is historical and now means the two `sm_89` cards; the `sm_120a` card
+  ships in `ninfer-sm120-windows-x64-<version>.zip`.
